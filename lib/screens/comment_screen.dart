@@ -226,33 +226,7 @@ class _CommentTabWidgetState extends State<CommentTabWidget> {
                   ),
                 ],
 
-                const SizedBox(height: 8),
 
-                // Like Button
-                InkWell(
-                  onTap: () {
-                    appState.toggleLikeComment(widget.caseId, comment.id);
-                  },
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        comment.isLiked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                        size: 14,
-                        color: comment.isLiked ? AppColors.primary : AppColors.textMuted,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'ถูกใจ${comment.likes > 0 ? ' (${comment.likes})' : ''}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: comment.isLiked ? AppColors.primary : AppColors.textMuted,
-                          fontWeight: comment.isLiked ? FontWeight.bold : FontWeight.normal,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),

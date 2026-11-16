@@ -217,7 +217,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Expanded(
                     child: _buildStatCard(
                       title: 'All Order',
-                      count: appState.orderTotalCount,
+                      count: appState.myOrderTotalCount,
                       badgeColor: const Color(0xFFFEF3C7),
                       textColor: const Color(0xFFD97706),
                       icon: Icons.inventory_2_outlined,
@@ -227,7 +227,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Expanded(
                     child: _buildStatCard(
                       title: 'Closed',
-                      count: appState.orderClosedCount,
+                      count: appState.myOrderClosedCount,
                       badgeColor: AppColors.closedBg,
                       textColor: AppColors.closedText,
                       icon: Icons.cancel_outlined,
@@ -241,7 +241,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Expanded(
                     child: _buildStatCard(
                       title: 'Order Diff',
-                      count: appState.orderDiffCount,
+                      count: appState.myOrderDiffCount,
                       badgeColor: const Color(0xFFDBEAFE),
                       textColor: const Color(0xFF2563EB),
                       icon: Icons.error_outline,
@@ -251,7 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Expanded(
                     child: _buildStatCard(
                       title: 'Bank Issue',
-                      count: appState.bankIssueCount,
+                      count: appState.myBankIssueCount,
                       badgeColor: const Color(0xFFF3E8FF),
                       textColor: const Color(0xFF9333EA),
                       icon: Icons.account_balance_outlined,
@@ -292,7 +292,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 8),
 
-              ...appState.orders.take(4).map(
+              ...appState.myOrders.take(4).map(
                 (item) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: item.cardType == OrderCardType.orderDiff

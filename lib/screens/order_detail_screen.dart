@@ -20,18 +20,72 @@ class OrderDetailScreen extends StatefulWidget {
 class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final TextEditingController _commentController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _tabBarKey = GlobalKey();
+  bool _isSticky = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this); // Comments & Timeline
+    _tabController = TabController(length: 2, vsync: this);
+    _scrollController.addListener(_onScroll);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) {
+        _scrollToTabBar();
+      }
+    });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _commentController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (_tabBarKey.currentContext != null) {
+      final box = _tabBarKey.currentContext!.findRenderObject() as RenderBox?;
+      if (box != null) {
+        final pos = box.localToGlobal(Offset.zero);
+        final sticky = pos.dy <= 80;
+        if (sticky != _isSticky) {
+          setState(() {
+            _isSticky = sticky;
+          });
+        }
+      }
+    }
+  }
+
+  void _scrollToTabBar() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_tabBarKey.currentContext != null) {
+        final renderBox = _tabBarKey.currentContext!.findRenderObject() as RenderBox?;
+        if (renderBox != null && _scrollController.hasClients) {
+          try {
+            final scrollableBox = _scrollController.position.context.storageContext.findRenderObject() as RenderBox?;
+            if (scrollableBox != null) {
+              final offset = renderBox.localToGlobal(Offset.zero, ancestor: scrollableBox).dy + _scrollController.offset;
+              final targetOffset = (offset - 80).clamp(0.0, _scrollController.position.maxScrollExtent);
+              _scrollController.animateTo(
+                targetOffset,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            }
+          } catch (_) {
+            Scrollable.ensureVisible(
+              _tabBarKey.currentContext!,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              alignment: 0.0,
+            );
+          }
+        }
+      }
+    });
   }
 
   void _sendComment(AppState appState, String orderId) {
@@ -388,458 +442,495 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
           const SizedBox(width: 8),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.cardBorder),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Main Card Header Section
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Order No. Label & Badges
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.all(16),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.cardBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Main Card Header Section
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Order No.',
-                          style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                        ),
+                        // Order No. Label & Badges
                         Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFEFF6FF),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                order.cardType.label,
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
-                              ),
+                            const Text(
+                              'Order No.',
+                              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                             ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    // Order ID + Delivery Type
-                    Text(
-                      '${order.id} ${order.deliveryType.label}',
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-
-                    // Badges row (Activity Status under Order ID)
-                    Row(
-                      children: [
-                        GestureDetector(
-                          onTap: () {
-                            if (OrderRolePermissionHelper.canUpdateActivityStatus(appState.currentUser, order)) {
-                              _showActivityStatusUpdateSheet(context, appState, order);
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('คุณไม่มีสิทธิ์เปลี่ยนสถานะออเดอร์นี้ (Developer เปลี่ยนได้เฉพาะออเดอร์ที่ได้รับมอบหมายเท่านั้น)'),
-                                  backgroundColor: Colors.orange,
-                                ),
-                              );
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: order.activityStatus.backgroundColor,
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: order.activityStatus.color.withValues(alpha: 0.3)),
-                            ),
-                            child: Text(
-                              order.activityStatus.label,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: order.activityStatus.color,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Info Row (Delivery Type | Date | Create By)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildInfoColumn(Icons.local_shipping_outlined, 'Delivery Type', order.deliveryType.label),
-                        _buildInfoColumn(Icons.calendar_today_outlined, 'Date', order.dateText),
-                        _buildInfoColumn(Icons.person_outline, 'Create By', order.createBy),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Error Section (For Order Diff) or Bank Section (For Bank Issue)
-                    if (isDiff) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEF2F2),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFFECACA)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
                             Row(
                               children: [
-                                const Icon(Icons.error_outline, color: Colors.red, size: 18),
-                                const SizedBox(width: 6),
-                                const Text('Error', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red)),
-                                const SizedBox(width: 8),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: Colors.red.shade100,
-                                    borderRadius: BorderRadius.circular(4),
+                                    color: const Color(0xFFEFF6FF),
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
-                                  child: const Text('404', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red)),
+                                  child: Text(
+                                    order.cardType.label,
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary),
+                                  ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 6),
-                            Text(
-                              order.errorDetails ?? 'Product not found\nไม่พบสินค้าตามรหัสที่ระบุ',
-                              style: const TextStyle(fontSize: 13, color: Color(0xFF991B1B), height: 1.3),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        // Order ID + Delivery Type
+                        Text(
+                          '${order.id} ${order.deliveryType.label}',
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+
+                        // Badges row (Activity Status under Order ID)
+                        Row(
+                          children: [
+                            GestureDetector(
+                              onTap: () {
+                                if (OrderRolePermissionHelper.canUpdateActivityStatus(appState.currentUser, order)) {
+                                  _showActivityStatusUpdateSheet(context, appState, order);
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('คุณไม่มีสิทธิ์เปลี่ยนสถานะออเดอร์นี้ (Developer เปลี่ยนได้เฉพาะออเดอร์ที่ได้รับมอบหมายเท่านั้น)'),
+                                      backgroundColor: Colors.orange,
+                                    ),
+                                  );
+                                }
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: order.activityStatus.backgroundColor,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: order.activityStatus.color.withValues(alpha: 0.3)),
+                                ),
+                                child: Text(
+                                  order.activityStatus.label,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: order.activityStatus.color,
+                                  ),
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                    ] else ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppColors.cardBorder),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(height: 16),
+
+                        // Info Row (Delivery Type | Date | Create By)
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Row(
+                            _buildInfoColumn(Icons.local_shipping_outlined, 'Delivery Type', order.deliveryType.label),
+                            _buildInfoColumn(Icons.calendar_today_outlined, 'Date', order.dateText),
+                            _buildInfoColumn(Icons.person_outline, 'Create By', order.createBy),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Error Section (For Order Diff) or Bank Section (For Bank Issue)
+                        if (isDiff) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF2F2),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFFECACA)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 18),
-                                SizedBox(width: 6),
-                                Text('Financial & Bank Issue', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.error_outline, color: Colors.red, size: 18),
+                                    const SizedBox(width: 6),
+                                    const Text('Error', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red)),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade100,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const Text('404', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.red)),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  order.errorDetails ?? 'Product not found\nไม่พบสินค้าตามรหัสที่ระบุ',
+                                  style: const TextStyle(fontSize: 13, color: Color(0xFF991B1B), height: 1.3),
+                                ),
                               ],
                             ),
-                            const SizedBox(height: 8),
-                            Text('ธนาคาร: ${order.displayBankName} • ช่องทาง: ${order.displayPaymentMethod}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                            if (order.amount != null)
-                              Text('จำนวนเงิน: ฿${order.amount!.toStringAsFixed(2)}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
-                            if (order.statusOrder != null)
-                              Text('สถานะคำสั่งซื้อ: ${order.statusOrder!.code} - ${order.statusOrder!.label}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
+                          ),
+                        ] else ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.cardBorder),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Row(
+                                  children: [
+                                    Icon(Icons.account_balance_outlined, color: AppColors.primary, size: 18),
+                                    SizedBox(width: 6),
+                                    Text('Financial & Bank Issue', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Text('ธนาคาร: ${order.displayBankName} • ช่องทาง: ${order.displayPaymentMethod}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                                if (order.amount != null)
+                                  Text('จำนวนเงิน: ฿${order.amount!.toStringAsFixed(2)}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
+                                if (order.statusOrder != null)
+                                  Text('สถานะคำสั่งซื้อ: ${order.statusOrder!.code} - ${order.statusOrder!.label}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
 
-                    // Assign & Priority Row
-                    Row(
-                      children: [
-                        Expanded(
-                          child: InkWell(
-                            onTap: () => _showOrderReassignSheet(context, appState, order),
-                            borderRadius: BorderRadius.circular(8),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
+                        // Assign & Priority Row
+                        Row(
+                          children: [
+                            Expanded(
+                              child: InkWell(
+                                onTap: () => _showOrderReassignSheet(context, appState, order),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Text('Assign', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                                          const SizedBox(width: 4),
+                                          Icon(Icons.edit, size: 12, color: AppColors.primary.withValues(alpha: 0.8)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      const Text('Team Backend', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          Icon(Icons.person, size: 14, color: order.assignee != null ? AppColors.primary : Colors.grey),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            order.assignee?.name ?? 'ยังไม่ระบุ',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: order.assignee != null ? AppColors.textSecondary : AppColors.textMuted,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(
-                                    children: [
-                                      const Text('Assign', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                                      const SizedBox(width: 4),
-                                      Icon(Icons.edit, size: 12, color: AppColors.primary.withValues(alpha: 0.8)),
-                                    ],
+                                  const Text('Priority', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                                  const SizedBox(height: 4),
+                                  _buildPriorityBadge(order.priority),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Real Interactive Attachments Section
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.attach_file, size: 18, color: AppColors.primary),
+                                SizedBox(width: 6),
+                                Text('ไฟล์แนบ (Attachments)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                              ],
+                            ),
+                            TextButton.icon(
+                              onPressed: () => _showAddAttachmentSheet(context, appState, order),
+                              icon: const Icon(Icons.add, size: 16),
+                              label: const Text('แนบไฟล์', style: TextStyle(fontSize: 12)),
+                              style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        if (order.attachments.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 6),
+                            child: Text('ยังไม่มีไฟล์แนบ', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                          )
+                        else
+                          ...order.attachments.map((att) {
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppColors.cardBorder),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    att.fileType == 'xlsx' || att.fileType == 'xls'
+                                        ? Icons.table_chart_outlined
+                                        : att.fileType == 'pdf'
+                                            ? Icons.picture_as_pdf_outlined
+                                            : Icons.insert_drive_file_outlined,
+                                    size: 20,
+                                    color: att.fileType == 'xlsx'
+                                        ? Colors.green
+                                        : att.fileType == 'pdf'
+                                            ? Colors.red
+                                            : AppColors.primary,
                                   ),
-                                  const SizedBox(height: 2),
-                                  const Text('Team Backend', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                  const SizedBox(height: 2),
-                                  Row(
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          att.name,
+                                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primary),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          '${att.size} • ${att.dateText}',
+                                          style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.download, size: 18, color: AppColors.primary),
+                                    tooltip: 'ดาวน์โหลด',
+                                    onPressed: () {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('กำลังดาวน์โหลดไฟล์ ${att.name}...')),
+                                      );
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                                    tooltip: 'ลบไฟล์',
+                                    onPressed: () {
+                                      appState.deleteOrderAttachment(order.id, att.id);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('ลบไฟล์ ${att.name} เรียบร้อยแล้ว')),
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                      ],
+                    ),
+                  ),
+
+                  const Divider(height: 1, color: AppColors.cardBorder),
+
+                  // Comments & Timeline Tabs
+                  Padding(
+                    key: _tabBarKey,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: TabBar(
+                      controller: _tabController,
+                      onTap: (_) => _scrollToTabBar(),
+                      labelColor: AppColors.primary,
+                      unselectedLabelColor: AppColors.textSecondary,
+                      indicatorColor: AppColors.primary,
+                      indicatorWeight: 3,
+                      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      tabs: const [
+                        Tab(text: 'Comments'),
+                        Tab(text: 'Timeline'),
+                      ],
+                    ),
+                  ),
+
+                  // Active Tab Content
+                  AnimatedBuilder(
+                    animation: _tabController,
+                    builder: (context, child) {
+                      return _tabController.index == 0
+                          ? Column(
+                              children: [
+                                order.comments.isEmpty
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(32),
+                                        child: Center(child: Text('ยังไม่มีความคิดเห็น', style: TextStyle(color: AppColors.textMuted))),
+                                      )
+                                    : ListView.builder(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        padding: const EdgeInsets.all(16),
+                                        itemCount: order.comments.length,
+                                        itemBuilder: (context, index) {
+                                          final comment = order.comments[index];
+                                          return _buildCommentItem(comment);
+                                        },
+                                      ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    border: Border(top: BorderSide(color: AppColors.cardBorder)),
+                                  ),
+                                  child: Row(
                                     children: [
-                                      Icon(Icons.person, size: 14, color: order.assignee != null ? AppColors.primary : Colors.grey),
+                                      IconButton(
+                                        icon: const Icon(Icons.crop_original, color: AppColors.textMuted, size: 20),
+                                        onPressed: () {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text('เลือกรูปภาพเรียบร้อย')),
+                                          );
+                                        },
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.attach_file, color: AppColors.textMuted, size: 20),
+                                        onPressed: () {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text('เลือกไฟล์เรียบร้อย')),
+                                          );
+                                        },
+                                      ),
                                       const SizedBox(width: 4),
-                                      Text(
-                                        order.assignee?.name ?? 'ยังไม่ระบุ',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: order.assignee != null ? AppColors.textSecondary : AppColors.textMuted,
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _commentController,
+                                          decoration: const InputDecoration(
+                                            hintText: 'พิมพ์ความคิดเห็น...',
+                                            hintStyle: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                                            contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                            fillColor: Color(0xFFF8FAFC),
+                                          ),
+                                          onSubmitted: (_) => _sendComment(appState, order.id),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: AppColors.primary,
+                                        child: IconButton(
+                                          icon: const Icon(Icons.send, color: Colors.white, size: 18),
+                                          onPressed: () => _sendComment(appState, order.id),
                                         ),
                                       ),
                                     ],
                                   ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Priority', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                              const SizedBox(height: 4),
-                              _buildPriorityBadge(order.priority),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Real Interactive Attachments Section
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.attach_file, size: 18, color: AppColors.primary),
-                            SizedBox(width: 6),
-                            Text('ไฟล์แนบ (Attachments)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                          ],
-                        ),
-                        TextButton.icon(
-                          onPressed: () => _showAddAttachmentSheet(context, appState, order),
-                          icon: const Icon(Icons.add, size: 16),
-                          label: const Text('แนบไฟล์', style: TextStyle(fontSize: 12)),
-                          style: TextButton.styleFrom(foregroundColor: AppColors.primary),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    if (order.attachments.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 6),
-                        child: Text('ยังไม่มีไฟล์แนบ', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                      )
-                    else
-                      ...order.attachments.map((att) {
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: AppColors.cardBorder),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                att.fileType == 'xlsx' || att.fileType == 'xls'
-                                    ? Icons.table_chart_outlined
-                                    : att.fileType == 'pdf'
-                                        ? Icons.picture_as_pdf_outlined
-                                        : Icons.insert_drive_file_outlined,
-                                size: 20,
-                                color: att.fileType == 'xlsx'
-                                    ? Colors.green
-                                    : att.fileType == 'pdf'
-                                        ? Colors.red
-                                        : AppColors.primary,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      att.name,
-                                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primary),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text(
-                                      '${att.size} • ${att.dateText}',
-                                      style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.download, size: 18, color: AppColors.primary),
-                                tooltip: 'ดาวน์โหลด',
-                                onPressed: () {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('กำลังดาวน์โหลดไฟล์ ${att.name}...')),
-                                  );
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                                tooltip: 'ลบไฟล์',
-                                onPressed: () {
-                                  appState.deleteOrderAttachment(order.id, att.id);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('ลบไฟล์ ${att.name} เรียบร้อยแล้ว')),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                  ],
-                ),
-              ),
-
-              const Divider(height: 1, color: AppColors.cardBorder),
-
-              // Comments & Timeline Tabs
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: TabBar(
-                  controller: _tabController,
-                  labelColor: AppColors.primary,
-                  unselectedLabelColor: AppColors.textSecondary,
-                  indicatorColor: AppColors.primary,
-                  indicatorWeight: 3,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  tabs: const [
-                    Tab(text: 'Comments'),
-                    Tab(text: 'Timeline'),
-                  ],
-                ),
-              ),
-
-              // Tab Bar View (Comments vs Timeline) with Bottom Input Bar
-              SizedBox(
-                height: 400,
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    // Tab 1: Comments View
-                    Column(
-                      children: [
-                        Expanded(
-                          child: order.comments.isEmpty
-                              ? const Center(child: Text('ยังไม่มีความคิดเห็น', style: TextStyle(color: AppColors.textMuted)))
-                              : ListView.builder(
-                                  padding: const EdgeInsets.all(16),
-                                  itemCount: order.comments.length,
-                                  itemBuilder: (context, index) {
-                                    final comment = order.comments[index];
-                                    return _buildCommentItem(comment);
-                                  },
-                                ),
-                        ),
-                        // Input Bar at bottom
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            border: Border(top: BorderSide(color: AppColors.cardBorder)),
-                          ),
-                          child: SafeArea(
-                            child: Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.crop_original, color: AppColors.textMuted, size: 20),
-                                  onPressed: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('เลือกรูปภาพเรียบร้อย')),
-                                    );
-                                  },
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.attach_file, color: AppColors.textMuted, size: 20),
-                                  onPressed: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('เลือกไฟล์เรียบร้อย')),
-                                    );
-                                  },
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: TextField(
-                                    controller: _commentController,
-                                    decoration: const InputDecoration(
-                                      hintText: 'พิมพ์ความคิดเห็น...',
-                                      hintStyle: TextStyle(fontSize: 13, color: AppColors.textMuted),
-                                      contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                      fillColor: Color(0xFFF8FAFC),
-                                    ),
-                                    onSubmitted: (_) => _sendComment(appState, order.id),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: AppColors.primary,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.send, color: Colors.white, size: 18),
-                                    onPressed: () => _sendComment(appState, order.id),
-                                  ),
                                 ),
                               ],
-                            ),
-                          ),
-                        ),
+                            )
+                          : Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: order.activityLogs.isEmpty
+                                  ? const Center(child: Text('ไม่มีประวัติ Timeline', style: TextStyle(color: AppColors.textMuted)))
+                                  : ListView.builder(
+                                      shrinkWrap: true,
+                                      physics: const NeverScrollableScrollPhysics(),
+                                      itemCount: order.activityLogs.length,
+                                      itemBuilder: (context, index) {
+                                        final log = order.activityLogs[index];
+                                        return Padding(
+                                          padding: const EdgeInsets.only(bottom: 14),
+                                          child: Row(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Container(
+                                                width: 30,
+                                                height: 30,
+                                                decoration: BoxDecoration(color: log.iconBgColor, shape: BoxShape.circle),
+                                                child: Icon(log.icon, size: 14, color: log.iconColor),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(log.dateText, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                                                    Text('${log.title} โดย ${log.authorName}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_isSticky)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Material(
+                elevation: 4,
+                color: Colors.white,
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    child: TabBar(
+                      controller: _tabController,
+                      onTap: (_) => _scrollToTabBar(),
+                      labelColor: AppColors.primary,
+                      unselectedLabelColor: AppColors.textSecondary,
+                      indicatorColor: AppColors.primary,
+                      indicatorWeight: 3,
+                      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      tabs: const [
+                        Tab(text: 'Comments'),
+                        Tab(text: 'Timeline'),
                       ],
                     ),
-
-                    // Tab 2: Timeline View
-                    ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: order.activityLogs.isEmpty
-                          ? [const Center(child: Text('ไม่มีประวัติ Timeline', style: TextStyle(color: AppColors.textMuted)))]
-                          : order.activityLogs.map((log) {
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 30,
-                                      height: 30,
-                                      decoration: BoxDecoration(color: log.iconBgColor, shape: BoxShape.circle),
-                                      child: Icon(log.icon, size: 14, color: log.iconColor),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(log.dateText, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                                          Text('${log.title} โดย ${log.authorName}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(16),

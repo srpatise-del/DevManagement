@@ -68,18 +68,10 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  void _fillDemoUser(UserModel user) {
-    setState(() {
-      emailController.text = user.email;
-      passwordController.text = user.password;
-    });
-    _login();
-  }
+
 
   @override
   Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
-
     return Scaffold(
       body: Container(
         width: double.infinity,
@@ -344,43 +336,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 28),
 
-                // Quick Demo Account Login Section
-                Text(
-                  '— หรือเลือกบัญชีเพื่อทดลองเข้าใช้งาน —',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withOpacity(0.8),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: appState.registeredUsers.map((u) {
-                    return ActionChip(
-                      avatar: CircleAvatar(
-                        backgroundColor: const Color(0xFF1D61E7),
-                        child: Text(
-                          u.avatarUrl,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      label: Text(
-                        '${u.name} (${u.role})',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
-                      backgroundColor: Colors.white.withOpacity(0.9),
-                      onPressed: () => _fillDemoUser(u),
-                    );
-                  }).toList(),
-                ),
 
                 const SizedBox(height: 32),
 

@@ -1364,6 +1364,16 @@ class AppState extends ChangeNotifier {
   int get orderPendingCount => orders.where((o) => o.statusOrder == OrderStatus.pending).length;
   int get orderWaitingPaymentCount => orders.where((o) => o.statusOrder == OrderStatus.waitingPayment).length;
 
+  // User-Assigned Dashboard Order Getters
+  List<OrderModel> get myOrders {
+    return orders.where((o) => o.assignee != null && o.assignee?.id == currentUser.id).toList();
+  }
+
+  int get myOrderTotalCount => myOrders.length;
+  int get myOrderDiffCount => myOrders.where((o) => o.cardType == OrderCardType.orderDiff).length;
+  int get myBankIssueCount => myOrders.where((o) => o.cardType == OrderCardType.bankIssue).length;
+  int get myOrderClosedCount => myOrders.where((o) => o.activityStatus == OrderActivityStatus.closed).length;
+
   void createOrderCard({
     required OrderCardType cardType,
     required String orderNo,

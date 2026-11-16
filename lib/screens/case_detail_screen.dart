@@ -22,17 +22,53 @@ class CaseDetailScreen extends StatefulWidget {
 
 class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _tabBarKey = GlobalKey();
+  bool _isSticky = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _scrollController.addListener(_onScroll);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) {
+        _scrollToTabBar();
+      }
+    });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (_tabBarKey.currentContext != null) {
+      final box = _tabBarKey.currentContext!.findRenderObject() as RenderBox?;
+      if (box != null) {
+        final pos = box.localToGlobal(Offset.zero);
+        final sticky = pos.dy <= 80;
+        if (sticky != _isSticky) {
+          setState(() {
+            _isSticky = sticky;
+          });
+        }
+      }
+    }
+  }
+
+  void _scrollToTabBar() {
+    if (_tabBarKey.currentContext != null) {
+      Scrollable.ensureVisible(
+        _tabBarKey.currentContext!,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+        alignment: 0.0,
+      );
+    }
   }
 
   void _handleOverflowSelection(BuildContext context, AppState appState, CaseModel caseObj, String key) {
@@ -568,143 +604,186 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
           const SizedBox(width: 8),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Header Card
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          SingleChildScrollView(
+            controller: _scrollController,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  caseObj.title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+                // Header Card
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        caseObj.title,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Badges row
+                      Row(
+                        children: [
+                          PriorityBadge(priority: caseObj.priority),
+                          const SizedBox(width: 8),
+                          StatusBadge(status: caseObj.status),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Info Cards Grid Row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.group_outlined, size: 20, color: AppColors.primary),
+                                  const SizedBox(width: 8),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text('ทีม', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                                      Text(
+                                        caseObj.team.label,
+                                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 12,
+                                    backgroundColor: caseObj.assignee != null ? AppColors.primary : Colors.grey.shade400,
+                                    child: caseObj.assignee != null
+                                        ? Text(
+                                            caseObj.assignee!.avatarUrl,
+                                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                          )
+                                        : const Icon(Icons.person_outline, color: Colors.white, size: 14),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text('ผู้รับผิดชอบ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                                      Text(
+                                        caseObj.assignee != null ? caseObj.assignee!.name : 'ยังไม่ระบุผู้รับผิดชอบ',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: caseObj.assignee != null ? AppColors.textPrimary : Colors.grey.shade600,
+                                          fontStyle: caseObj.assignee == null ? FontStyle.italic : FontStyle.normal,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Tab Bar
+                      TabBar(
+                        key: _tabBarKey,
+                        controller: _tabController,
+                        labelColor: AppColors.primary,
+                        unselectedLabelColor: AppColors.textSecondary,
+                        indicatorColor: AppColors.primary,
+                        indicatorWeight: 3,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        tabs: [
+                          const Tab(text: 'รายละเอียด'),
+                          Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
+                          const Tab(text: 'Activity Log'),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
 
-                // Badges row
-                Row(
-                  children: [
-                    PriorityBadge(priority: caseObj.priority),
-                    const SizedBox(width: 8),
-                    StatusBadge(status: caseObj.status),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // Info Cards Grid Row
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.group_outlined, size: 20, color: AppColors.primary),
-                            const SizedBox(width: 8),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('ทีม', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                                Text(
-                                  caseObj.team.label,
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 12,
-                              backgroundColor: caseObj.assignee != null ? AppColors.primary : Colors.grey.shade400,
-                              child: caseObj.assignee != null
-                                  ? Text(
-                                      caseObj.assignee!.avatarUrl,
-                                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                    )
-                                  : const Icon(Icons.person_outline, color: Colors.white, size: 14),
-                            ),
-                            const SizedBox(width: 8),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('ผู้รับผิดชอบ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                                Text(
-                                  caseObj.assignee != null ? caseObj.assignee!.name : 'ยังไม่ระบุผู้รับผิดชอบ',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: caseObj.assignee != null ? AppColors.textPrimary : Colors.grey.shade600,
-                                    fontStyle: caseObj.assignee == null ? FontStyle.italic : FontStyle.normal,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Tab Bar
-                TabBar(
-                  controller: _tabController,
-                  labelColor: AppColors.primary,
-                  unselectedLabelColor: AppColors.textSecondary,
-                  indicatorColor: AppColors.primary,
-                  indicatorWeight: 3,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  tabs: [
-                    const Tab(text: 'รายละเอียด'),
-                    Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
-                    const Tab(text: 'Activity Log'),
-                  ],
+                // Tab Views Content
+                AnimatedBuilder(
+                  animation: _tabController,
+                  builder: (context, child) {
+                    if (_tabController.index == 0) {
+                      return _buildDetailsTab(caseObj);
+                    } else if (_tabController.index == 1) {
+                      return SizedBox(
+                        height: 600,
+                        child: CommentTabWidget(caseId: caseObj.id),
+                      );
+                    } else {
+                      return SizedBox(
+                        height: 600,
+                        child: ActivityLogTabWidget(caseId: caseObj.id),
+                      );
+                    }
+                  },
                 ),
               ],
             ),
           ),
-
-          // Tab Views
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                // Tab 1: Details View
-                _buildDetailsTab(caseObj),
-                // Tab 2: Comments View
-                CommentTabWidget(caseId: caseObj.id),
-                // Tab 3: Activity Log View
-                ActivityLogTabWidget(caseId: caseObj.id),
-              ],
+          if (_isSticky)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Material(
+                elevation: 4,
+                color: Colors.white,
+                child: SafeArea(
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: TabBar(
+                      controller: _tabController,
+                      labelColor: AppColors.primary,
+                      unselectedLabelColor: AppColors.textSecondary,
+                      indicatorColor: AppColors.primary,
+                      indicatorWeight: 3,
+                      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      tabs: [
+                        const Tab(text: 'รายละเอียด'),
+                        Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
+                        const Tab(text: 'Activity Log'),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-
-          // Bottom Action Button
-          if (canChangeStatus)
-            Container(
+        ],
+      ),
+      bottomNavigationBar: canChangeStatus
+          ? Container(
               padding: const EdgeInsets.all(16),
               decoration: const BoxDecoration(
                 color: Colors.white,
@@ -733,9 +812,8 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
                   ),
                 ),
               ),
-            ),
-        ],
-      ),
+            )
+          : null,
     );
   }
 
