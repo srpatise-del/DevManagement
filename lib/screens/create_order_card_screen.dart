@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/app_models.dart';
+import '../widgets/attachment_picker_widget.dart';
 
 class CreateOrderCardScreen extends StatefulWidget {
   const CreateOrderCardScreen({super.key});
@@ -22,6 +23,7 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
   String _selectedPaymentMethodCode = 'QR_PROMPTPAY';
   final _customPaymentMethodController = TextEditingController();
   final List<AttachmentModel> _attachedFiles = [];
+  List<PendingFileAttachment> _pendingFiles = [];
 
   OrderCardType _cardType = OrderCardType.orderDiff;
   DeliveryType _deliveryType = DeliveryType.express;
@@ -123,90 +125,7 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
     );
   }
 
-  void _showAddFileDialog() {
-    final fileNameController = TextEditingController();
-    final fileSizeController = TextEditingController(text: '1.2 MB');
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('แนบไฟล์เอกสาร / หลักฐาน', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text('เลือกไฟล์ตัวอย่างด่วน:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildPresetChip('slip_transfer.png', '1.2 MB', 'png', ctx),
-                  _buildPresetChip('order_report.xlsx', '3.1 MB', 'xlsx', ctx),
-                  _buildPresetChip('error_log.txt', '120 KB', 'txt', ctx),
-                  _buildPresetChip('tax_invoice.pdf', '850 KB', 'pdf', ctx),
-                ],
-              ),
-              const Divider(height: 24),
-              TextField(
-                controller: fileNameController,
-                decoration: const InputDecoration(hintText: 'ชื่อไฟล์ (เช่น document.pdf)'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: fileSizeController,
-                decoration: const InputDecoration(hintText: 'ขนาดไฟล์ (เช่น 1.5 MB)'),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    final name = fileNameController.text.trim();
-                    final size = fileSizeController.text.trim().isNotEmpty ? fileSizeController.text.trim() : '1.0 MB';
-                    if (name.isNotEmpty) {
-                      final ext = name.contains('.') ? name.split('.').last.toLowerCase() : 'xlsx';
-                      setState(() {
-                        _attachedFiles.add(AttachmentModel(
-                          id: 'att-${DateTime.now().millisecondsSinceEpoch}',
-                          name: name,
-                          size: size,
-                          dateText: 'วันนี้',
-                          fileType: ext,
-                        ));
-                      });
-                      Navigator.pop(ctx);
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text('เพิ่มไฟล์แนบ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   Widget _buildPresetChip(String name, String size, String type, BuildContext ctx) {
     return ActionChip(
@@ -248,6 +167,7 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
         assignee: _assignee,
         createBy: appState.currentUser.name,
         attachments: _attachedFiles,
+        pendingFiles: _pendingFiles,
         errorDetails: _cardType == OrderCardType.orderDiff ? _errorDetailsController.text.trim() : null,
         bankCode: _cardType == OrderCardType.bankIssue ? _selectedBankCode : null,
         bankName: _cardType == OrderCardType.bankIssue ? finalBankName : null,
@@ -505,67 +425,15 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
               ),
               const SizedBox(height: 14),
 
-              // Attachments Section
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('ไฟล์แนบ / หลักฐาน (Attachments)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  TextButton.icon(
-                    onPressed: _showAddFileDialog,
-                    icon: const Icon(Icons.add, size: 16),
-                    label: const Text('แนบไฟล์', style: TextStyle(fontSize: 12)),
-                  ),
-                ],
+              // Attachment Picker Widget
+              AttachmentPickerWidget(
+                pendingFiles: _pendingFiles,
+                onFilesChanged: (files) {
+                  setState(() {
+                    _pendingFiles = files;
+                  });
+                },
               ),
-              const SizedBox(height: 6),
-              if (_attachedFiles.isEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.cardBorder),
-                  ),
-                  child: const Center(
-                    child: Text('ยังไม่มีไฟล์แนบ (คลิก "แนบไฟล์" ด้านบนเพื่อเพิ่ม)', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                  ),
-                )
-              else
-                ..._attachedFiles.map((f) {
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.cardBorder),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.insert_drive_file, color: AppColors.primary, size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(f.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primary)),
-                              Text(f.size, style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
-                          onPressed: () {
-                            setState(() {
-                              _attachedFiles.remove(f);
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  );
-                }),
               const SizedBox(height: 28),
 
               // Submit Button

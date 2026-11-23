@@ -121,6 +121,24 @@ class RolePermissionHelper {
     }
   }
 
+  /// Determines if a [user] can edit a specific [comment].
+  static bool canEditComment(UserModel user, CommentModel comment) {
+    // Admins can edit any comment
+    if (user.roleEnum == UserRole.admin) return true;
+    
+    // Otherwise, must be the owner (checked by user ID)
+    return user.id == comment.author.id;
+  }
+
+  /// Determines if a [user] can delete a specific [comment].
+  static bool canDeleteComment(UserModel user, CommentModel comment) {
+    // Admins can delete any comment
+    if (user.roleEnum == UserRole.admin) return true;
+    
+    // Otherwise, must be the owner (checked by user ID)
+    return user.id == comment.author.id;
+  }
+
   /// Gets allowed status transitions for a [role] given the current [CaseStatus].
   static List<CaseStatus> getAllowedStatuses(UserRole role, CaseStatus currentStatus) {
     if (role == UserRole.admin || role == UserRole.teamLead) {

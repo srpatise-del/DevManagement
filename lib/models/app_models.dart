@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'role_permission.dart';
+import 'file_attachment_model.dart';
 
 class AppConfig {
   static const String version = '1.0.12';
@@ -122,8 +123,15 @@ enum TeamType {
   }
 }
 
+
 class UserModel {
+  // Employee Code เช่น EMP-001
+  // คง id เดิมไว้เพื่อไม่ให้กระทบระบบเก่า
   final String id;
+
+  // UUID จาก Supabase Auth / profiles.id
+  final String? authUserId;
+
   final String name;
   final String role;
   final String email;
@@ -132,52 +140,80 @@ class UserModel {
   final TeamType? team;
   final String? phoneNumber;
   final String? position;
+  final String? teamStatus;
+  final String? requestedTeamId;
+  final bool isActive;
 
   const UserModel({
     required this.id,
+    this.authUserId,
     required this.name,
     required this.role,
     required this.email,
-    required this.password,
+    this.password = '',
     required this.avatarUrl,
     this.team,
     this.phoneNumber,
     this.position,
+    this.teamStatus,
+    this.requestedTeamId,
+    this.isActive = true,
   });
 
   UserRole get roleEnum => UserRole.fromString(role);
 
   UserModel copyWith({
+    String? authUserId,
+    bool clearAuthUserId = false,
     String? name,
     String? role,
     String? email,
     String? password,
     String? avatarUrl,
     TeamType? team,
+    bool clearTeam = false,
     String? phoneNumber,
     String? position,
+    String? teamStatus,
+    bool clearTeamStatus = false,
+    String? requestedTeamId,
+    bool clearRequestedTeamId = false,
+    bool? isActive,
   }) {
     return UserModel(
       id: id,
+      authUserId: clearAuthUserId
+          ? null
+          : (authUserId ?? this.authUserId),
       name: name ?? this.name,
       role: role ?? this.role,
       email: email ?? this.email,
       password: password ?? this.password,
       avatarUrl: avatarUrl ?? this.avatarUrl,
-      team: team ?? this.team,
+      team: clearTeam ? null : (team ?? this.team),
       phoneNumber: phoneNumber ?? this.phoneNumber,
       position: position ?? this.position,
+      teamStatus: clearTeamStatus
+          ? null
+          : (teamStatus ?? this.teamStatus),
+      requestedTeamId: clearRequestedTeamId
+          ? null
+          : (requestedTeamId ?? this.requestedTeamId),
+      isActive: isActive ?? this.isActive,
     );
   }
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is UserModel && runtimeType == other.runtimeType && id == other.id;
+          other is UserModel &&
+              runtimeType == other.runtimeType &&
+              id == other.id;
 
   @override
   int get hashCode => id.hashCode;
 }
+
 
 class CommentModel {
   final String id;
@@ -186,6 +222,8 @@ class CommentModel {
   final String content;
   final String dateText;
   final String? attachedImageUrl;
+  final String? attachedImagePath;
+  final List<FileAttachmentModel> attachedFiles;
   final int likes;
   final bool isLiked;
 
@@ -196,6 +234,8 @@ class CommentModel {
     required this.content,
     required this.dateText,
     this.attachedImageUrl,
+    this.attachedImagePath,
+    this.attachedFiles = const [],
     this.likes = 0,
     this.isLiked = false,
   });
@@ -203,6 +243,11 @@ class CommentModel {
   CommentModel copyWith({
     int? likes,
     bool? isLiked,
+    String? attachedImagePath,
+    bool clearAttachedImagePath = false,
+    String? attachedImageUrl,
+    bool clearAttachedImageUrl = false,
+    List<FileAttachmentModel>? attachedFiles,
   }) {
     return CommentModel(
       id: id,
@@ -210,7 +255,13 @@ class CommentModel {
       author: author,
       content: content,
       dateText: dateText,
-      attachedImageUrl: attachedImageUrl,
+      attachedImageUrl: clearAttachedImageUrl
+          ? null
+          : (attachedImageUrl ?? this.attachedImageUrl),
+      attachedImagePath: clearAttachedImagePath
+          ? null
+          : (attachedImagePath ?? this.attachedImagePath),
+      attachedFiles: attachedFiles ?? this.attachedFiles,
       likes: likes ?? this.likes,
       isLiked: isLiked ?? this.isLiked,
     );
@@ -242,16 +293,28 @@ class ActivityLogModel {
 class CaseFileAttachment {
   final String fileName;
   final String fileSize;
+  final String? fileType;
+  final String? storagePath;
+  final String? url;
+  final String? mimeType;
+  final int fileSizeBytes;
 
   const CaseFileAttachment({
     required this.fileName,
     required this.fileSize,
+    this.fileType,
+    this.storagePath,
+    this.url,
+    this.mimeType,
+    this.fileSizeBytes = 0,
   });
 }
 
 class CaseModel {
   final String id;
+  final String? supabaseId;
   final String title;
+  final String? details;
   final CasePriority priority;
   final CaseStatus status;
   final TeamType team;
@@ -270,7 +333,9 @@ class CaseModel {
 
   CaseModel({
     required this.id,
+    this.supabaseId,
     required this.title,
+    this.details,
     required this.priority,
     required this.status,
     required this.team,
@@ -289,7 +354,11 @@ class CaseModel {
   });
 
   CaseModel copyWith({
+    String? supabaseId,
+    bool clearSupabaseId = false,
     String? title,
+    String? details,
+    bool clearDetails = false,
     CasePriority? priority,
     CaseStatus? status,
     TeamType? team,
@@ -309,7 +378,13 @@ class CaseModel {
   }) {
     return CaseModel(
       id: id,
+      supabaseId: clearSupabaseId
+          ? null
+          : (supabaseId ?? this.supabaseId),
       title: title ?? this.title,
+      details: clearDetails
+          ? null
+          : (details ?? this.details),
       priority: priority ?? this.priority,
       status: status ?? this.status,
       team: team ?? this.team,
@@ -457,6 +532,10 @@ class AttachmentModel {
   final String size;
   final String dateText;
   final String fileType; // 'xlsx', 'pdf', 'png', 'txt'
+  final String? storagePath;
+  final String? url;
+  final String? mimeType;
+  final int fileSizeBytes;
 
   const AttachmentModel({
     required this.id,
@@ -464,6 +543,10 @@ class AttachmentModel {
     required this.size,
     required this.dateText,
     required this.fileType,
+    this.storagePath,
+    this.url,
+    this.mimeType,
+    this.fileSizeBytes = 0,
   });
 }
 
@@ -763,6 +846,16 @@ class OrderRolePermissionHelper {
       return order.assignee?.id == user.id;
     }
     return false;
+  }
+
+  static bool canEditComment(UserModel user, CommentModel comment) {
+    if (user.roleEnum == UserRole.admin) return true;
+    return user.id == comment.author.id;
+  }
+
+  static bool canDeleteComment(UserModel user, CommentModel comment) {
+    if (user.roleEnum == UserRole.admin) return true;
+    return user.id == comment.author.id;
   }
 }
 

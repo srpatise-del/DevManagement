@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/app_models.dart';
+import '../config/attachment_config.dart';
 
 class EditOrderScreen extends StatefulWidget {
   final OrderModel orderObj;
@@ -204,7 +206,63 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                 ],
               ),
               const SizedBox(height: 12),
-              const Text('เลือกไฟล์ตัวอย่างด่วน:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  try {
+                    final result = await FilePicker.platform.pickFiles(
+                      allowMultiple: false,
+                      type: FileType.custom,
+                      allowedExtensions: AttachmentConfig.allAllowedExtensions.toList(),
+                      withData: true,
+                    );
+                    if (result != null && result.files.isNotEmpty) {
+                      final f = result.files.first;
+                      final err = AttachmentConfig.validateFile(
+                        fileName: f.name,
+                        fileSizeBytes: f.size,
+                      );
+                      if (err != null) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text(err), backgroundColor: Colors.red),
+                          );
+                        }
+                        return;
+                      }
+
+                      final ext = f.extension ?? (f.name.contains('.') ? f.name.split('.').last : 'file');
+                      final sizeStr = AttachmentConfig.formatFileSize(f.size);
+
+                      setState(() {
+                        _attachedFiles.add(AttachmentModel(
+                          id: 'att-${DateTime.now().millisecondsSinceEpoch}',
+                          name: f.name,
+                          size: sizeStr,
+                          dateText: 'วันนี้',
+                          fileType: ext,
+                          fileSizeBytes: f.size,
+                        ));
+                      });
+
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    }
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        SnackBar(content: Text('เลือกไฟล์ไม่สำเร็จ: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.folder_open, size: 20),
+                label: const Text('เลือกไฟล์จากอุปกรณ์ (Choose File from device)', style: TextStyle(fontSize: 14)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('หรือเลือกไฟล์ตัวอย่างด่วน:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,

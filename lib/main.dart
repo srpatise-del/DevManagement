@@ -1,5 +1,9 @@
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'config/supabase_config.dart';
 import 'theme/app_theme.dart';
 import 'providers/app_state.dart';
 import 'screens/login_screen.dart';
@@ -8,7 +12,16 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Supabase
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    anonKey: SupabaseConfig.publishableKey,
+  );
+
+  // Initialize Notification Service
   await NotificationService.initialize();
+
   runApp(const DevCaseApp());
 }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers/app_state.dart';
 import '../models/app_models.dart';
 import 'main_navigation_screen.dart';
@@ -26,7 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _login() {
+  Future<void> _login() async {
     final email = emailController.text.trim();
     final password = passwordController.text.trim();
 
@@ -42,33 +43,80 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => isLoading = true);
 
-    Future.delayed(const Duration(milliseconds: 500), () {
+    try {
+      // 1. Sign in with Supabase Auth
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      if (response.user == null) {
+        throw const AuthException('เข้าสู่ระบบไม่สำเร็จ');
+      }
+
+      // 2. Fetch user profile from public.profiles table
+      final profileRes = await Supabase.instance.client
+          .from('profiles')
+          .select('*, teams!profiles_team_id_fkey(id, name, code)')
+          .eq('id', response.user!.id)
+          .single();
+
+      if (profileRes.isEmpty) {
+        throw Exception('ไม่พบข้อมูลโปรไฟล์ผู้ใช้ในระบบ');
+      }
+
+      // 3. Check if account is active
+      final isActive = profileRes['is_active'] ?? true;
+      if (!isActive) {
+        await Supabase.instance.client.auth.signOut();
+        throw const AuthException('บัญชีผู้ใช้นี้ถูกระงับการใช้งาน');
+      }
+
       if (!mounted) return;
-
-      final appState = Provider.of<AppState>(context, listen: false);
-      final success = appState.loginWithCredentials(email, password);
-
       setState(() => isLoading = false);
 
-      if (success) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const MainNavigationScreen(),
-          ),
-        );
+      // 4. Update AppState with Supabase profile
+      final appState = Provider.of<AppState>(context, listen: false);
+      appState.loginWithSupabaseProfile(profileRes);
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const MainNavigationScreen(),
+        ),
+      );
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => isLoading = false);
+
+      String message = 'เข้าสู่ระบบไม่สำเร็จ';
+      final errLower = e.message.toLowerCase();
+      if (errLower.contains('invalid login credentials') || errLower.contains('invalid grant')) {
+        message = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
+      } else if (errLower.contains('email not confirmed')) {
+        message = 'กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ';
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Email หรือ Password ไม่ถูกต้อง'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        message = e.message;
       }
-    });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => isLoading = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('เกิดข้อผิดพลาด: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -335,8 +383,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                 ),
-
-
 
                 const SizedBox(height: 32),
 

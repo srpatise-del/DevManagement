@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/app_models.dart';
+import '../models/role_permission.dart';
+import '../widgets/attachment_picker_widget.dart';
 
 class CreateCaseScreen extends StatefulWidget {
   const CreateCaseScreen({super.key});
@@ -35,6 +37,8 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
 
   final List<String> _attachedImages = [];
   final List<CaseFileAttachment> _attachedFiles = [];
+  List<PendingFileAttachment> _pendingFiles = [];
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -50,244 +54,15 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
     super.dispose();
   }
 
-  void _showAttachmentPickerSheet() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Container(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'เลือกประเภทไฟล์แนบ',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.image_outlined, color: AppColors.primary),
-                ),
-                title: const Text('แนบรูปภาพ (Image)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                subtitle: const Text('เพิ่มรูปภาพหน้าจอข้อผิดพลาด หรือ Screenshot', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showAddImageDialog();
-                },
-              ),
-              const Divider(height: 1),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF3E8FF),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.insert_drive_file_outlined, color: Colors.purple),
-                ),
-                title: const Text('แนบไฟล์เอกสาร (File Attachment)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                subtitle: const Text('เพิ่มไฟล์ Log, PDF, JSON หรือ Document เอกสาร', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showAddFileDialog();
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
-  void _showAddImageDialog() {
-    final customNameController = TextEditingController();
-    final presets = [
-      'error_screenshot_v1.png',
-      'console_log_dump.png',
-      'ui_render_issue.png',
-      'network_payload_error.jpg',
-    ];
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('เพิ่มรูปภาพแนบ'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('เลือกจากตัวอย่าง:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textMuted)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: presets.map((preset) {
-                return ActionChip(
-                  avatar: const Icon(Icons.image, size: 16, color: AppColors.primary),
-                  label: Text(preset, style: const TextStyle(fontSize: 11)),
-                  onPressed: () {
-                    setState(() {
-                      _attachedImages.add(preset);
-                    });
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('แนบรูปภาพ $preset แล้ว')),
-                    );
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-            const Text('หรือพิมพ์ชื่อรูปภาพ:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textMuted)),
-            const SizedBox(height: 6),
-            TextField(
-              controller: customNameController,
-              decoration: const InputDecoration(
-                hintText: 'เช่น my_screenshot.png',
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final text = customNameController.text.trim();
-              if (text.isNotEmpty) {
-                final imageName = text.contains('.') ? text : '$text.png';
-                setState(() {
-                  _attachedImages.add(imageName);
-                });
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('แนบรูปภาพ $imageName แล้ว')),
-                );
-              }
-            },
-            child: const Text('เพิ่ม'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddFileDialog() {
-    final fileNameController = TextEditingController();
-    final fileSizeController = TextEditingController(text: '250 KB');
-
-    final presets = [
-      const CaseFileAttachment(fileName: 'error_log.txt', fileSize: '120 KB'),
-      const CaseFileAttachment(fileName: 'api_trace.json', fileSize: '45 KB'),
-      const CaseFileAttachment(fileName: 'crash_report.pdf', fileSize: '1.4 MB'),
-      const CaseFileAttachment(fileName: 'db_dump.sql', fileSize: '2.8 MB'),
-    ];
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('เพิ่มไฟล์เอกสารแนบ'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('เลือกจากตัวอย่าง:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textMuted)),
-              const SizedBox(height: 8),
-              Column(
-                children: presets.map((preset) {
-                  return ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.insert_drive_file, color: Colors.purple, size: 20),
-                    title: Text(preset.fileName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: Text(preset.fileSize, style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                    onTap: () {
-                      setState(() {
-                        _attachedFiles.add(preset);
-                      });
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('แนบไฟล์ ${preset.fileName} แล้ว')),
-                      );
-                    },
-                  );
-                }).toList(),
-              ),
-              const Divider(height: 20),
-              const Text('หรือระบุชื่อไฟล์ใหม่:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textMuted)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: fileNameController,
-                decoration: const InputDecoration(
-                  hintText: 'ชื่อไฟล์ เช่น system_log.txt',
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: fileSizeController,
-                decoration: const InputDecoration(
-                  hintText: 'ขนาดไฟล์ เช่น 350 KB',
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final name = fileNameController.text.trim();
-              final size = fileSizeController.text.trim().isNotEmpty ? fileSizeController.text.trim() : '100 KB';
-              if (name.isNotEmpty) {
-                setState(() {
-                  _attachedFiles.add(CaseFileAttachment(fileName: name, fileSize: size));
-                });
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('แนบไฟล์ $name แล้ว')),
-                );
-              }
-            },
-            child: const Text('เพิ่ม'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _submit() {
+  void _submit() async {
+    if (_isSubmitting) return;
     if (_formKey.currentState!.validate()) {
+      setState(() {
+        _isSubmitting = true;
+      });
+
       final appState = Provider.of<AppState>(context, listen: false);
 
       String formattedUrl = '';
@@ -302,34 +77,57 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
         formattedBrowser = '${_deviceModelController.text.trim()} (${_osVersionController.text.trim()})';
       }
 
-      appState.createCase(
-        title: _titleController.text.trim(),
-        team: _selectedTeam,
-        category: _categoryController.text.trim(),
-        assignee: _selectedAssignee,
-        priority: _selectedPriority,
-        systemAffected: _systemController.text.trim(),
-        environment: _envController.text.trim(),
-        url: formattedUrl,
-        browser: formattedBrowser,
-        images: _attachedImages,
-        files: _attachedFiles,
-      );
+      try {
+        await appState.createCase(
+          title: _titleController.text.trim(),
+          team: _selectedTeam,
+          category: _categoryController.text.trim(),
+          assignee: _selectedAssignee,
+          priority: _selectedPriority,
+          systemAffected: _systemController.text.trim(),
+          environment: _envController.text.trim(),
+          url: formattedUrl,
+          browser: formattedBrowser,
+          images: _attachedImages,
+          files: _attachedFiles,
+          pendingFiles: _pendingFiles,
+        );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('สร้างเคสเรียบร้อยแล้ว'),
-          backgroundColor: Colors.green,
-        ),
-      );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('สร้างเคสเรียบร้อยแล้ว'),
+            backgroundColor: Colors.green,
+          ),
+        );
 
-      Navigator.pop(context);
+        Navigator.pop(context);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('เกิดข้อผิดพลาดในการสร้างเคส: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSubmitting = false;
+          });
+        }
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
+    final isUserRole = appState.currentUser.roleEnum == UserRole.user;
+
+    if (isUserRole) {
+      _selectedAssignee = null;
+    }
 
     // Filter registered users belonging to the currently selected team
     final teamMembers = appState.registeredUsers.where((u) => u.team == _selectedTeam).toList();
@@ -474,47 +272,67 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildSectionTitle('ผู้รับผิดชอบ (ไม่บังคับ)'),
+                        _buildSectionTitle('ผู้รับผิดชอบ'),
                         const SizedBox(height: 6),
-                        DropdownButtonFormField<UserModel?>(
-                          isExpanded: true,
-                          value: _selectedAssignee,
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                          ),
-                          items: [
-                            const DropdownMenuItem<UserModel?>(
-                              value: null,
-                              child: Text(
-                                'ยังไม่ระบุผู้รับผิดชอบ',
-                                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
+                        if (isUserRole) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.cardBorder),
                             ),
-                            ...teamMembers.map((u) {
-                              return DropdownMenuItem<UserModel?>(
-                                value: u,
+                            child: const Text(
+                              'ยังไม่ระบุผู้รับผิดชอบ (อัตโนมัติ)',
+                              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'ผู้ใช้งานทั่วไปไม่สามารถกำหนดผู้รับผิดชอบได้',
+                            style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                          ),
+                        ] else ...[
+                          DropdownButtonFormField<UserModel?>(
+                            isExpanded: true,
+                            value: _selectedAssignee,
+                            decoration: const InputDecoration(
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            ),
+                            items: [
+                              const DropdownMenuItem<UserModel?>(
+                                value: null,
                                 child: Text(
-                                  '${u.name} (${u.role})',
-                                  style: const TextStyle(fontSize: 12),
+                                  'ยังไม่ระบุผู้รับผิดชอบ',
+                                  style: TextStyle(fontSize: 12, color: AppColors.textMuted),
                                   overflow: TextOverflow.ellipsis,
                                   maxLines: 1,
                                 ),
-                              );
-                            }),
-                          ],
-                          onChanged: (val) {
-                            setState(() => _selectedAssignee = val);
-                          },
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          teamMembers.isNotEmpty
-                              ? 'สมาชิกใน ${_selectedTeam.label} (${teamMembers.length} คน)'
-                              : 'ทีมนี้ยังไม่มีสมาชิกในระบบ (เคสจะถูกส่งให้ Team Lead / Admin จัดการ)',
-                          style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-                        ),
+                              ),
+                              ...teamMembers.map((u) {
+                                return DropdownMenuItem<UserModel?>(
+                                  value: u,
+                                  child: Text(
+                                    '${u.name} (${u.role})',
+                                    style: TextStyle(fontSize: 12),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                  ),
+                                );
+                              }),
+                            ],
+                            onChanged: (val) {
+                              setState(() => _selectedAssignee = val);
+                            },
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            teamMembers.isNotEmpty
+                                ? 'สมาชิกใน ${_selectedTeam.label} (${teamMembers.length} คน)'
+                                : 'ทีมนี้ยังไม่มีสมาชิกในระบบ (เคสจะถูกส่งให้ Team Lead / Admin จัดการ)',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -756,151 +574,17 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
               ],
 
               const SizedBox(height: 20),
-
-              // Attachment Simulator
-              _buildSectionTitle('แนบรูปภาพ / ไฟล์'),
-              const SizedBox(height: 8),
-              InkWell(
-                onTap: _showAttachmentPickerSheet,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppColors.primary, style: BorderStyle.solid),
-                  ),
-                  child: const Column(
-                    children: [
-                      Icon(Icons.cloud_upload_outlined, color: AppColors.primary, size: 32),
-                      SizedBox(height: 6),
-                      Text(
-                        'คลิกเพื่อแนบรูปภาพหรือไฟล์เอกสาร',
-                        style: TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        'รองรับ PNG, JPG, PDF, TXT, JSON, SQL',
-                        style: TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              // Attachment Picker Widget
+              AttachmentPickerWidget(
+                pendingFiles: _pendingFiles,
+                onFilesChanged: (files) {
+                  setState(() {
+                    _pendingFiles = files;
+                  });
+                },
+                isUploading: _isSubmitting,
+                uploadProgressText: 'กำลังบันทึกและอัปโหลดไฟล์...',
               ),
-
-              // Attached Images Section
-              if (_attachedImages.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                const Text(
-                  'รูปภาพที่แนบแล้ว',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _attachedImages.map((img) {
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEFF6FF),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFBFDBFE)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.image, size: 16, color: AppColors.primary),
-                          const SizedBox(width: 6),
-                          Text(img, style: const TextStyle(fontSize: 12, color: AppColors.textPrimary, fontWeight: FontWeight.w500)),
-                          const SizedBox(width: 6),
-                          InkWell(
-                            onTap: () {
-                              setState(() {
-                                _attachedImages.remove(img);
-                              });
-                            },
-                            child: const Icon(Icons.close, size: 16, color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-
-              // Attached Files Section
-              if (_attachedFiles.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                const Text(
-                  'ไฟล์เอกสารที่แนบแล้ว',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.textSecondary),
-                ),
-                const SizedBox(height: 8),
-                Column(
-                  children: _attachedFiles.map((f) {
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.cardBorder),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF3E8FF),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(Icons.insert_drive_file, color: Colors.purple, size: 18),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  f.fileName,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                                Text(
-                                  f.fileSize,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppColors.textMuted,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
-                            onPressed: () {
-                              setState(() {
-                                _attachedFiles.remove(f);
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
 
               const SizedBox(height: 32),
 
@@ -909,20 +593,29 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _submit,
+                  onPressed: _isSubmitting ? null : _submit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
-                  child: const Text(
-                    'บันทึก / สร้างเคส',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: _isSubmitting
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'บันทึก / สร้างเคส',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
             ],

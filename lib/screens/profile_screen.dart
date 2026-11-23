@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/app_models.dart';
 import '../models/role_permission.dart';
 import 'login_screen.dart';
 import 'reports_export_screen.dart';
+import 'admin_users_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -258,6 +260,173 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildMyTeamCard(BuildContext context, AppState appState, UserModel user) {
+    final status = user.teamStatus ?? 'approved';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'ทีมของฉัน (My Team)',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
+              if (status != 'pending')
+                OutlinedButton.icon(
+                  onPressed: () => _showRequestTeamDialog(context, appState),
+                  icon: const Icon(Icons.swap_horiz, size: 16, color: AppColors.primary),
+                  label: const Text('ขอเปลี่ยนทีม', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppColors.primary),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(Icons.groups_outlined, color: AppColors.textSecondary, size: 20),
+              const SizedBox(width: 10),
+              Text(
+                user.team?.label ?? 'ยังไม่มีทีมสังกัด',
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Text('สถานะคำขอ: ', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: status == 'approved'
+                      ? Colors.green.shade100
+                      : status == 'rejected'
+                          ? Colors.red.shade100
+                          : Colors.amber.shade100,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  status.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: status == 'approved'
+                        ? Colors.green.shade800
+                        : status == 'rejected'
+                            ? Colors.red.shade800
+                            : Colors.amber.shade800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (status == 'pending') ...[
+            const SizedBox(height: 8),
+            const Text(
+              'คำขอเปลี่ยนทีมของคุณกำลังรอการอนุมัติจากผู้ดูแลระบบ',
+              style: TextStyle(fontSize: 11, color: Color(0xFFD97706), fontWeight: FontWeight.w500),
+            ),
+          ] else if (status == 'rejected') ...[
+            const SizedBox(height: 8),
+            const Text(
+              'คำขอเปลี่ยนทีมก่อนหน้าไม่ได้รับการอนุมัติ คุณสามารถส่งคำขอใหม่ได้',
+              style: TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showRequestTeamDialog(BuildContext context, AppState appState) async {
+    try {
+      final teamsRes = await Supabase.instance.client
+          .from('teams')
+          .select('id, name')
+          .eq('is_active', true)
+          .order('name');
+
+      final teams = List<Map<String, dynamic>>.from(teamsRes);
+      if (teams.isEmpty) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ไม่พบข้อมูลทีมที่เปิดใช้งานในระบบ'), backgroundColor: Colors.orange),
+        );
+        return;
+      }
+
+      String? selectedTeamId = teams.first['id'];
+
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('ส่งคำขอเปลี่ยนทีม'),
+          content: StatefulBuilder(
+            builder: (context, setDialogState) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('เลือกทีมที่ต้องการเข้าร่วม:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: teams.any((t) => t['id'] == selectedTeamId) ? selectedTeamId : teams.first['id'] as String?,
+                  items: teams.map((t) {
+                    return DropdownMenuItem<String>(
+                      value: t['id'] as String,
+                      child: Text(t['name'] as String),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) setDialogState(() => selectedTeamId = val);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('ยกเลิก')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('ยืนยันส่งคำขอ'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm == true && selectedTeamId != null) {
+        final success = await appState.requestTeam(selectedTeamId!);
+        if (!context.mounted) return;
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ส่งคำขอเปลี่ยนทีมเรียบร้อยแล้ว รอ Admin อนุมัติ'), backgroundColor: Colors.green),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('เกิดข้อผิดพลาดในการส่งคำขอ'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('เกิดข้อผิดพลาด: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
@@ -289,6 +458,10 @@ class ProfileScreen extends StatelessWidget {
           children: [
             // Section 1: Profile Header
             _buildProfileHeaderCard(context, appState, user),
+            const SizedBox(height: 20),
+
+            // Section 1.5: My Team & Request Change
+            _buildMyTeamCard(context, appState, user),
             const SizedBox(height: 20),
 
             // Section 2: Summary Statistics (Exactly 2 concise items: เคสทั้งหมด & ออเดอร์ทั้งหมด)
@@ -683,6 +856,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _buildAccountSettingsCard(BuildContext context, AppState appState) {
+    final user = appState.currentUser;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -691,6 +865,23 @@ class ProfileScreen extends StatelessWidget {
       ),
       child: Column(
         children: [
+          if (user.roleEnum == UserRole.admin) ...[
+            _buildSettingsMenuItem(
+              icon: Icons.admin_panel_settings_outlined,
+              title: 'จัดการสมาชิกและการอนุมัติทีม',
+              subtitle: 'อนุมัติหรือปฏิเสธคำขอทีมของสมาชิก',
+              iconColor: Colors.purple,
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminUsersScreen(),
+                  ),
+                );
+              },
+            ),
+            const Divider(height: 1, indent: 50, color: AppColors.cardBorder),
+          ],
           _buildSettingsMenuItem(
             icon: Icons.bar_chart_outlined,
             title: 'Reports & Export',

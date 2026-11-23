@@ -1,10 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/app_models.dart';
 import '../models/role_permission.dart';
+import '../models/file_attachment_model.dart';
 import '../theme/app_theme.dart';
+import '../repositories/case_repository.dart';
+import '../services/storage_service.dart';
+import '../widgets/attachment_picker_widget.dart';
+
+enum AppDataMode {
+  initializing,
+  demo,
+  real,
+}
 
 class AppState extends ChangeNotifier {
+  final CaseRepository caseRepository = CaseRepository();
+  AppDataMode dataMode = AppDataMode.initializing;
   // Pre-configured registered users list
   final List<UserModel> registeredUsers = [
     const UserModel(
@@ -88,6 +101,122 @@ class AppState extends ChangeNotifier {
     _initData();
   }
 
+  Future<void> loadCasesFromSupabase() async {
+    if (dataMode != AppDataMode.real) return;
+    try {
+      cases = await caseRepository.loadCases();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<String?> _getTeamUuid(TeamType team) async {
+    try {
+      final code = team.name.toLowerCase();
+      final res = await Supabase.instance.client
+          .from('teams')
+          .select('id')
+          .eq('code', code)
+          .maybeSingle();
+      return res?['id'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _findSupabaseCaseId(String caseId) {
+    final match = cases.firstWhere(
+      (c) => c.id == caseId || c.supabaseId == caseId,
+      orElse: () => CaseModel(
+        id: '',
+        title: '',
+        priority: CasePriority.low,
+        status: CaseStatus.open,
+        team: TeamType.web,
+        category: '',
+        dateText: '',
+        systemAffected: '',
+        environment: '',
+        url: '',
+        browser: '',
+      ),
+    );
+    return match.supabaseId;
+  }
+
+  Future<String?> _getOrFetchSupabaseCaseId(String caseId) async {
+    final uuidRegex = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+    if (uuidRegex.hasMatch(caseId)) {
+      return caseId;
+    }
+
+    final localId = _findSupabaseCaseId(caseId);
+    if (localId != null && uuidRegex.hasMatch(localId)) {
+      return localId;
+    }
+
+    try {
+      final res = await Supabase.instance.client
+          .from('cases')
+          .select('id')
+          .eq('case_no', caseId)
+          .maybeSingle();
+      final fetchedId = res?['id'] as String?;
+      if (fetchedId != null && uuidRegex.hasMatch(fetchedId)) {
+        return fetchedId;
+      }
+    } catch (e) {
+      debugPrint('[AppState._getOrFetchSupabaseCaseId] Error fetching UUID for $caseId: $e');
+    }
+
+    return localId;
+  }
+
+  Future<void> loginWithSupabaseProfile(Map<String, dynamic> profile) async {
+    final fullName = profile['full_name'] as String? ?? 'User';
+    final email = profile['email'] as String? ?? '';
+    final role = profile['role'] as String? ?? 'user';
+    final employeeCode = profile['employee_code'] as String? ?? 'EMP-001';
+    final teamStatus = profile['team_status'] as String? ?? 'pending';
+    final requestedTeamId = profile['requested_team_id'] as String?;
+    final isActive = profile['is_active'] as bool? ?? true;
+    
+    TeamType? teamEnum;
+    final teamData = profile['teams'];
+    if (teamData != null && teamData is Map<String, dynamic>) {
+      final code = (teamData['code'] as String? ?? '').toLowerCase();
+      teamEnum = TeamType.values.firstWhere(
+        (t) => t.name.toLowerCase() == code,
+        orElse: () => TeamType.web,
+      );
+    }
+
+    final avatarLetter = fullName.isNotEmpty ? fullName.substring(0, 1).toUpperCase() : 'U';
+
+    currentUser = UserModel(
+      id: employeeCode,
+      authUserId: profile['id']?.toString(),
+      name: fullName,
+      role: role,
+      email: email,
+      password: '',
+      avatarUrl: avatarLetter,
+      team: teamEnum,
+      phoneNumber: profile['phone_number'] ?? '081-000-0000',
+      position: role.toUpperCase(),
+      teamStatus: teamStatus,
+      requestedTeamId: requestedTeamId,
+      isActive: isActive,
+    );
+
+    dataMode = AppDataMode.real;
+    isLoggedIn = true;
+    selectedNavIndex = 0;
+    cases = [];
+    orders = [];
+    notifyListeners();
+    await loadCasesFromSupabase();
+  }
+
   // Authenticators
   bool loginWithCredentials(String email, String password) {
     final matchIndex = registeredUsers.indexWhere(
@@ -140,10 +269,89 @@ class AppState extends ChangeNotifier {
   }
 
   void quickDemoLogin(UserModel user) {
+    dataMode = AppDataMode.demo;
     currentUser = user;
     isLoggedIn = true;
     selectedNavIndex = 0; // Reset tab to Dashboard
+    _initData();
     notifyListeners();
+  }
+
+  Future<bool> requestTeam(String teamId) async {
+    try {
+      final response = await Supabase.instance.client.rpc('request_team', params: {'p_team_id': teamId});
+      if (response == true || response == null) {
+        await refreshProfile();
+        return true;
+      }
+      return response == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> refreshProfile() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        final profileRes = await Supabase.instance.client
+            .from('profiles')
+            .select('*, teams!profiles_team_id_fkey(id, name, code), requested_team:teams!profiles_requested_team_id_fkey(id, name, code)')
+            .eq('id', user.id)
+            .maybeSingle();
+        if (profileRes != null) {
+          await loginWithSupabaseProfile(profileRes);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<bool> approveTeam(String userId) async {
+    try {
+      final response = await Supabase.instance.client.rpc('approve_team', params: {'p_user_id': userId});
+      return response == true || response == null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> rejectTeam(String userId) async {
+    try {
+      final response = await Supabase.instance.client.rpc('reject_team', params: {'p_user_id': userId});
+      return response == true || response == null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> setProfileRole(String profileId, String newRole) async {
+    try {
+      final response = await Supabase.instance.client.rpc(
+        'devc_case_set_profile_role',
+        params: {
+          'p_profile_id': profileId,
+          'p_new_role': newRole,
+        },
+      );
+      return response == true || response == null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> setProfileTeam(String profileId, String teamId) async {
+    try {
+      final response = await Supabase.instance.client.rpc(
+        'devc_case_set_profile_team',
+        params: {
+          'p_profile_id': profileId,
+          'p_team_id': teamId,
+        },
+      );
+      return response == true || response == null;
+    } catch (_) {
+      return false;
+    }
   }
 
   void _initData() {
@@ -1383,6 +1591,7 @@ class AppState extends ChangeNotifier {
     required String createBy,
     String? importFile,
     List<AttachmentModel> attachments = const [],
+    List<PendingFileAttachment>? pendingFiles,
     String? errorDetails,
     String? bankCode,
     String? bankName,
@@ -1408,6 +1617,19 @@ class AppState extends ChangeNotifier {
     ];
 
     List<AttachmentModel> finalAttachments = List.from(attachments);
+    if (pendingFiles != null && pendingFiles.isNotEmpty) {
+      for (var pf in pendingFiles) {
+        finalAttachments.add(AttachmentModel(
+          id: 'att-${DateTime.now().millisecondsSinceEpoch}-${pf.name.hashCode}',
+          name: pf.name,
+          size: pf.formattedSize,
+          dateText: 'วันนี้',
+          fileType: pf.extension,
+          fileSizeBytes: pf.sizeBytes,
+        ));
+      }
+    }
+
     if (finalAttachments.isEmpty && importFile != null && importFile.trim().isNotEmpty) {
       final ext = importFile.contains('.') ? importFile.split('.').last.toLowerCase() : 'xlsx';
       finalAttachments.add(AttachmentModel(
@@ -1594,51 +1816,143 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void addOrderComment(String orderId, String content) {
+  Future<void> addOrderComment(
+    String orderId,
+    String content, {
+    List<PendingFileAttachment>? pendingFiles,
+  }) async {
     final index = _findOrderIndex(orderId);
-    if (index != -1) {
-      final oldOrder = orders[index];
-      final timeStr = DateFormat('dd MMM yyyy HH:mm').format(DateTime.now());
-      final newComment = CommentModel(
-        id: 'ord-c-${DateTime.now().millisecondsSinceEpoch}',
-        caseId: orderId,
-        author: currentUser,
-        content: content,
-        dateText: timeStr,
-      );
-      final newLog = ActivityLogModel(
-        id: 'ord-act-${DateTime.now().millisecondsSinceEpoch}',
-        caseId: orderId,
-        title: 'เพิ่มความคิดเห็น',
-        authorName: currentUser.name,
-        dateText: timeStr,
-        icon: Icons.chat_bubble,
-        iconColor: Colors.blue,
-        iconBgColor: const Color(0xFFDBEAFE),
-      );
+    if (index == -1) return;
 
-      final updatedComments = List<CommentModel>.from(oldOrder.comments)..add(newComment);
-      final updatedLogs = List<ActivityLogModel>.from(oldOrder.activityLogs)..add(newLog);
+    final oldOrder = orders[index];
+    final List<FileAttachmentModel> uploadedAttachments = [];
 
-      orders[index] = oldOrder.copyWith(
-        comments: updatedComments,
-        activityLogs: updatedLogs,
-      );
-
-      final orderMod = oldOrder.cardType == OrderCardType.orderDiff ? NotificationModule.orderDiff : NotificationModule.bankIssue;
-      _sendNotification(
-        module: orderMod,
-        referenceId: orderId,
-        assignee: oldOrder.assignee,
-        title: 'มี Comment ใหม่ในออเดอร์ $orderId',
-        subtitle: '${currentUser.name}: $content',
-        icon: Icons.chat_bubble_outline,
-        iconColor: const Color(0xFF2563EB),
-        iconBg: const Color(0xFFDBEAFE),
-      );
-
-      notifyListeners();
+    if (pendingFiles != null && pendingFiles.isNotEmpty) {
+      final tempCommentId = 'ord-c-${DateTime.now().millisecondsSinceEpoch}';
+      for (var pf in pendingFiles) {
+        final fileBytes = await pf.getBytes();
+        if (fileBytes != null) {
+          try {
+            final fileModel = await StorageService.uploadFile(
+              itemId: orderId,
+              isCase: false,
+              commentId: tempCommentId,
+              bytes: fileBytes,
+              fileName: pf.name,
+              sizeBytes: pf.sizeBytes,
+            );
+            uploadedAttachments.add(fileModel);
+          } catch (e) {
+            debugPrint('[AppState.addOrderComment] Storage upload error: $e');
+            uploadedAttachments.add(FileAttachmentModel(
+              id: DateTime.now().microsecondsSinceEpoch.toString(),
+              fileName: pf.name,
+              fileSize: pf.formattedSize,
+              fileSizeBytes: pf.sizeBytes,
+              fileType: pf.extension,
+              bytes: fileBytes,
+            ));
+          }
+        } else {
+          uploadedAttachments.add(FileAttachmentModel(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            fileName: pf.name,
+            fileSize: pf.formattedSize,
+            fileSizeBytes: pf.sizeBytes,
+            fileType: pf.extension,
+          ));
+        }
+      }
     }
+
+    final timeStr = DateFormat('dd MMM yyyy HH:mm').format(DateTime.now());
+    final displayContent = content.trim().isEmpty && uploadedAttachments.isNotEmpty
+        ? '[ไฟล์แนบ ${uploadedAttachments.length} รายการ]'
+        : content.trim();
+
+    final newComment = CommentModel(
+      id: 'ord-c-${DateTime.now().millisecondsSinceEpoch}',
+      caseId: orderId,
+      author: currentUser,
+      content: displayContent,
+      dateText: timeStr,
+      attachedFiles: uploadedAttachments,
+      attachedImageUrl: uploadedAttachments.any((f) => f.isImage)
+          ? uploadedAttachments.firstWhere((f) => f.isImage).url
+          : null,
+    );
+
+    final newLog = ActivityLogModel(
+      id: 'ord-act-${DateTime.now().millisecondsSinceEpoch}',
+      caseId: orderId,
+      title: 'เพิ่มความคิดเห็น${uploadedAttachments.isNotEmpty ? " พร้อมไฟล์แนบ (${uploadedAttachments.length})" : ""}',
+      authorName: currentUser.name,
+      dateText: timeStr,
+      icon: Icons.chat_bubble,
+      iconColor: Colors.blue,
+      iconBgColor: const Color(0xFFDBEAFE),
+    );
+
+    final updatedComments = List<CommentModel>.from(oldOrder.comments)..add(newComment);
+    final updatedLogs = List<ActivityLogModel>.from(oldOrder.activityLogs)..add(newLog);
+
+    orders[index] = oldOrder.copyWith(
+      comments: updatedComments,
+      activityLogs: updatedLogs,
+    );
+
+    final orderMod = oldOrder.cardType == OrderCardType.orderDiff ? NotificationModule.orderDiff : NotificationModule.bankIssue;
+    _sendNotification(
+      module: orderMod,
+      referenceId: orderId,
+      assignee: oldOrder.assignee,
+      title: 'มี Comment ใหม่ในออเดอร์ $orderId',
+      subtitle: '${currentUser.name}: ${displayContent.isEmpty ? "แนบไฟล์" : displayContent}',
+      icon: Icons.chat_bubble_outline,
+      iconColor: const Color(0xFF2563EB),
+      iconBg: const Color(0xFFDBEAFE),
+    );
+
+    notifyListeners();
+  }
+
+  void editOrderComment(String orderId, String commentId, String newContent) {
+    if (currentUser == null) return;
+    
+    final index = _findOrderIndex(orderId);
+    if (index == -1) return;
+    
+    final oldOrder = orders[index];
+    final commentIndex = oldOrder.comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) return;
+
+    final comment = oldOrder.comments[commentIndex];
+    if (!OrderRolePermissionHelper.canEditComment(currentUser!, comment)) return;
+
+    final updatedComments = List<CommentModel>.from(oldOrder.comments);
+    updatedComments[commentIndex] = comment.copyWith(content: newContent);
+
+    orders[index] = oldOrder.copyWith(comments: updatedComments);
+    notifyListeners();
+  }
+
+  void deleteOrderComment(String orderId, String commentId) {
+    if (currentUser == null) return;
+    
+    final index = _findOrderIndex(orderId);
+    if (index == -1) return;
+    
+    final oldOrder = orders[index];
+    final commentIndex = oldOrder.comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) return;
+
+    final comment = oldOrder.comments[commentIndex];
+    if (!OrderRolePermissionHelper.canDeleteComment(currentUser!, comment)) return;
+
+    final updatedComments = List<CommentModel>.from(oldOrder.comments)..removeAt(commentIndex);
+
+    orders[index] = oldOrder.copyWith(comments: updatedComments);
+    notifyListeners();
   }
 
   // Unread count specifically for currentUser
@@ -1674,7 +1988,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void createCase({
+  Future<void> createCase({
     required String title,
     required TeamType team,
     required String category,
@@ -1687,9 +2001,95 @@ class AppState extends ChangeNotifier {
     String? description,
     List<String>? images,
     List<CaseFileAttachment>? files,
-  }) {
+    List<PendingFileAttachment>? pendingFiles,
+  }) async {
+    if (currentUser.roleEnum == UserRole.user) {
+      if (assignee != null) {
+        throw Exception('Role User ไม่อนุญาตให้กำหนด Assignee ตอนสร้างเคส');
+      }
+    }
+
+    if (dataMode == AppDataMode.real) {
+      debugPrint('[AppState.createCase] Real mode start for title: $title, team: ${team.name}');
+      try {
+        final teamCode = team.name.toLowerCase();
+        debugPrint('[AppState.createCase] Searching team UUID for code: $teamCode');
+        final teamUuid = await _getTeamUuid(team);
+        if (teamUuid == null) {
+          throw Exception('ไม่พบข้อมูลทีม (${team.label}) ในระบบฐานข้อมูล (Code: $teamCode)');
+        }
+        debugPrint('[AppState.createCase] Team UUID found: $teamUuid. Starting Supabase insert...');
+
+        final createdCase = await caseRepository.createCase(
+          title: title,
+          details: description,
+          priority: priority,
+          status: CaseStatus.open,
+          teamId: teamUuid,
+          category: category,
+          assigneeId: assignee?.authUserId,
+          systemAffected: systemAffected,
+          environment: environment,
+          url: url,
+          browser: browser,
+        );
+
+        if (pendingFiles != null && pendingFiles.isNotEmpty && createdCase.supabaseId != null) {
+          final List<String> uploadErrors = [];
+          for (var pf in pendingFiles) {
+            final fileBytes = await pf.getBytes();
+            if (fileBytes != null) {
+              try {
+                await caseRepository.uploadAttachment(
+                  supabaseCaseId: createdCase.supabaseId!,
+                  fileBytes: fileBytes,
+                  fileName: pf.name,
+                  fileSize: pf.formattedSize,
+                  fileType: pf.extension,
+                );
+              } catch (e) {
+                debugPrint('[AppState.createCase] Attachment upload warning: $e');
+                uploadErrors.add('${pf.name}: ${e.toString().replaceAll('Exception: ', '')}');
+              }
+            } else {
+              uploadErrors.add('${pf.name}: ไม่สามารถอ่านข้อมูลไฟล์ไบต์ได้');
+            }
+          }
+
+          if (uploadErrors.isNotEmpty) {
+            throw Exception('สร้างเคสสำเร็จ แต่อัปโหลดไฟล์แนบไม่ผ่าน:\n${uploadErrors.join('\n')}');
+          }
+        }
+
+        debugPrint('[AppState.createCase] Insert successful. Refreshing cases...');
+
+        await loadCasesFromSupabase();
+        debugPrint('[AppState.createCase] Refresh cases successful.');
+      } catch (e, stack) {
+        debugPrint('[AppState.createCase] ERROR: $e\n$stack');
+        rethrow;
+      }
+      return;
+    }
+
     final nextNum = cases.length + 1;
     final id = 'DEV-${nextNum.toString().padLeft(3, '0')}';
+
+    final List<CaseFileAttachment> finalFiles = List.from(files ?? []);
+    final List<String> finalImages = List.from(images ?? []);
+    if (pendingFiles != null && pendingFiles.isNotEmpty) {
+      for (var pf in pendingFiles) {
+        if (pf.isImage) {
+          finalImages.add('https://picsum.photos/400/300');
+        }
+        finalFiles.add(CaseFileAttachment(
+          fileName: pf.name,
+          fileSize: pf.formattedSize,
+          fileType: pf.extension,
+          fileSizeBytes: pf.sizeBytes,
+        ));
+      }
+    }
 
     final newCase = CaseModel(
       id: id,
@@ -1705,8 +2105,9 @@ class AppState extends ChangeNotifier {
       url: url,
       browser: browser,
       createdById: currentUser.id,
-      attachedImages: images ?? [],
-      attachedFiles: files ?? [],
+      attachedImages: finalImages,
+      attachedFiles: finalFiles,
+      comments: [],
       activityLogs: [
         ActivityLogModel(
           id: 'act-${DateTime.now().millisecondsSinceEpoch}',
@@ -1768,7 +2169,29 @@ class AppState extends ChangeNotifier {
     required String environment,
     required String url,
     required String browser,
-  }) {
+  }) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        final supabaseId = _findSupabaseCaseId(caseId);
+        final teamUuid = await _getTeamUuid(team);
+        if (supabaseId != null && teamUuid != null) {
+          await caseRepository.updateCase(supabaseId, {
+            'title': title,
+            'team_id': teamUuid,
+            'category': category,
+            'assignee_id': assignee?.authUserId,
+            'priority': priority.name,
+            'system_affected': systemAffected,
+            'environment': environment,
+            'url': url,
+            'browser': browser,
+          });
+          await loadCasesFromSupabase();
+        }
+      } catch (_) {}
+      return;
+    }
+
     final index = cases.indexWhere((c) => c.id == caseId);
     if (index != -1) {
       final oldCase = cases[index];
@@ -1802,7 +2225,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void updateCaseStatus(String caseId, CaseStatus newStatus) {
+  void updateCaseStatus(String caseId, CaseStatus newStatus) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        final supabaseId = _findSupabaseCaseId(caseId);
+        if (supabaseId != null) {
+          await caseRepository.updateCase(supabaseId, {
+            'status': newStatus.name,
+          });
+          await loadCasesFromSupabase();
+        }
+      } catch (_) {}
+      return;
+    }
+
     final index = cases.indexWhere((c) => c.id == caseId);
     if (index != -1) {
       final oldCase = cases[index];
@@ -1842,7 +2278,102 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void addComment(String caseId, String content, {String? imagePath}) {
+  Future<void> addComment(
+    String caseId,
+    String content, {
+    String? imagePath,
+    List<PendingFileAttachment>? pendingFiles,
+  }) async {
+    final List<FileAttachmentModel> uploadedAttachments = [];
+    final supabaseId = await _getOrFetchSupabaseCaseId(caseId);
+
+    if (supabaseId == null || supabaseId.isEmpty) {
+      throw Exception('ไม่พบรหัสอ้างอิงเคส ($caseId) ในระบบฐานข้อมูล Supabase');
+    }
+
+    if (pendingFiles != null && pendingFiles.isNotEmpty) {
+      for (var pf in pendingFiles) {
+        final fileBytes = await pf.getBytes();
+        if (fileBytes != null) {
+          try {
+            final fileModel = await StorageService.uploadFile(
+              itemId: supabaseId,
+              isCase: true,
+              commentId: 'attachment',
+              bytes: fileBytes,
+              fileName: pf.name,
+              sizeBytes: pf.sizeBytes,
+            );
+            uploadedAttachments.add(fileModel);
+          } catch (e) {
+            debugPrint('[AppState.addComment] Upload error: $e');
+            uploadedAttachments.add(FileAttachmentModel(
+              id: DateTime.now().microsecondsSinceEpoch.toString(),
+              fileName: pf.name,
+              fileSize: pf.formattedSize,
+              fileSizeBytes: pf.sizeBytes,
+              fileType: pf.extension,
+              bytes: fileBytes,
+            ));
+          }
+        } else {
+          uploadedAttachments.add(FileAttachmentModel(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            fileName: pf.name,
+            fileSize: pf.formattedSize,
+            fileSizeBytes: pf.sizeBytes,
+            fileType: pf.extension,
+          ));
+        }
+      }
+    }
+
+    final displayContent = content.trim().isEmpty && uploadedAttachments.isNotEmpty
+        ? '[ไฟล์แนบ ${uploadedAttachments.length} รายการ]'
+        : content.trim();
+
+    if (dataMode == AppDataMode.real) {
+      try {
+        String finalContent = displayContent;
+        if (uploadedAttachments.isNotEmpty) {
+          final attTags = uploadedAttachments
+              .where((a) => a.storagePath != null && a.storagePath!.isNotEmpty)
+              .map((a) => '[attachment:${a.storagePath}]')
+              .join('\n');
+          if (attTags.isNotEmpty) {
+            finalContent = '$finalContent\n$attTags';
+          }
+        }
+
+        final firstAttachmentPath = uploadedAttachments.isNotEmpty
+            ? uploadedAttachments.first.storagePath
+            : imagePath;
+
+        final newComment = await caseRepository.addComment(supabaseId, finalContent, attachedImagePath: firstAttachmentPath);
+
+        // Update local state in memory
+        final index = cases.indexWhere((c) => c.supabaseId == supabaseId || c.id == caseId);
+        if (index != -1) {
+          final oldCase = cases[index];
+          final updatedComments = List<CommentModel>.from(oldCase.comments);
+          final existingIdx = updatedComments.indexWhere((c) => c.id == newComment.id);
+          if (existingIdx != -1) {
+            updatedComments[existingIdx] = newComment;
+          } else {
+            updatedComments.add(newComment);
+          }
+          cases[index] = oldCase.copyWith(comments: updatedComments);
+          notifyListeners();
+        }
+
+        await loadCasesFromSupabase();
+      } catch (e) {
+        debugPrint('[AppState.addComment] Supabase error: $e');
+        rethrow;
+      }
+      return;
+    }
+
     final index = cases.indexWhere((c) => c.id == caseId);
     if (index != -1) {
       final oldCase = cases[index];
@@ -1851,9 +2382,10 @@ class AppState extends ChangeNotifier {
         id: 'c-${DateTime.now().millisecondsSinceEpoch}',
         caseId: caseId,
         author: currentUser,
-        content: content,
+        content: displayContent,
         dateText: 'วันนี้',
-        attachedImageUrl: imagePath,
+        attachedImageUrl: imagePath ?? (uploadedAttachments.any((f) => f.isImage) ? uploadedAttachments.firstWhere((f) => f.isImage).url : null),
+        attachedFiles: uploadedAttachments,
       );
 
       final updatedComments = List<CommentModel>.from(oldCase.comments)..add(newComment);
@@ -1861,7 +2393,7 @@ class AppState extends ChangeNotifier {
         ActivityLogModel(
           id: 'act-${DateTime.now().millisecondsSinceEpoch}',
           caseId: caseId,
-          title: 'เพิ่มความคิดเห็น',
+          title: 'เพิ่มความคิดเห็น${uploadedAttachments.isNotEmpty ? " พร้อมไฟล์แนบ (${uploadedAttachments.length})" : ""}',
           authorName: currentUser.name,
           dateText: 'วันนี้',
           icon: Icons.chat_bubble,
@@ -1890,7 +2422,15 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void toggleLikeComment(String caseId, String commentId) {
+  void toggleLikeComment(String caseId, String commentId) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        await caseRepository.toggleLikeComment(commentId);
+        await loadCasesFromSupabase();
+      } catch (_) {}
+      return;
+    }
+
     final caseIndex = cases.indexWhere((c) => c.id == caseId);
     if (caseIndex != -1) {
       final caseObj = cases[caseIndex];
@@ -1926,7 +2466,79 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void deleteCase(String caseId) {
+  Future<void> editCaseComment(String caseId, String commentId, String newContent) async {
+    if (currentUser == null) return;
+    
+    if (dataMode == AppDataMode.real) {
+      try {
+        await caseRepository.editComment(commentId, newContent);
+        await loadCasesFromSupabase();
+      } catch (e) {
+        debugPrint('[AppState.editCaseComment] Supabase error: $e');
+        rethrow;
+      }
+      return;
+    }
+
+    final index = cases.indexWhere((c) => c.id == caseId);
+    if (index == -1) return;
+
+    final oldCase = cases[index];
+    final commentIndex = oldCase.comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) return;
+
+    final comment = oldCase.comments[commentIndex];
+    if (!RolePermissionHelper.canEditComment(currentUser!, comment)) return;
+
+    final updatedComments = List<CommentModel>.from(oldCase.comments);
+    updatedComments[commentIndex] = comment.copyWith(content: newContent);
+
+    cases[index] = oldCase.copyWith(comments: updatedComments);
+    notifyListeners();
+  }
+
+  Future<void> deleteCaseComment(String caseId, String commentId) async {
+    if (currentUser == null) return;
+
+    if (dataMode == AppDataMode.real) {
+      try {
+        await caseRepository.deleteComment(commentId);
+        await loadCasesFromSupabase();
+      } catch (e) {
+        debugPrint('[AppState.deleteCaseComment] Supabase error: $e');
+        rethrow;
+      }
+      return;
+    }
+
+    final index = cases.indexWhere((c) => c.id == caseId);
+    if (index == -1) return;
+
+    final oldCase = cases[index];
+    final commentIndex = oldCase.comments.indexWhere((c) => c.id == commentId);
+    if (commentIndex == -1) return;
+
+    final comment = oldCase.comments[commentIndex];
+    if (!RolePermissionHelper.canDeleteComment(currentUser!, comment)) return;
+
+    final updatedComments = List<CommentModel>.from(oldCase.comments)..removeAt(commentIndex);
+
+    cases[index] = oldCase.copyWith(comments: updatedComments);
+    notifyListeners();
+  }
+
+  void deleteCase(String caseId) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        final supabaseId = _findSupabaseCaseId(caseId);
+        if (supabaseId != null) {
+          await caseRepository.deleteCase(supabaseId);
+          await loadCasesFromSupabase();
+        }
+      } catch (_) {}
+      return;
+    }
+
     cases.removeWhere((c) => c.id == caseId);
     notifyListeners();
   }
@@ -1973,7 +2585,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void addOrderAttachment(String orderId, String fileName, String size, String fileType) {
+  void addOrderAttachment(
+    String orderId,
+    String fileName,
+    String size,
+    String fileType, {
+    String? storagePath,
+    String? url,
+  }) {
     final index = _findOrderIndex(orderId);
     if (index != -1) {
       final oldOrder = orders[index];
@@ -1984,6 +2603,8 @@ class AppState extends ChangeNotifier {
         size: size,
         dateText: timeStr,
         fileType: fileType,
+        storagePath: storagePath,
+        url: url,
       );
       final newLog = ActivityLogModel(
         id: 'ord-act-${DateTime.now().millisecondsSinceEpoch}',
@@ -2059,7 +2680,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void reassignCase(String caseId, UserModel? newAssignee) {
+  void reassignCase(String caseId, UserModel? newAssignee) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        final supabaseId = _findSupabaseCaseId(caseId);
+        if (supabaseId != null) {
+          await caseRepository.updateCase(supabaseId, {
+            'assignee_id': newAssignee?.authUserId,
+          });
+          await loadCasesFromSupabase();
+        }
+      } catch (_) {}
+      return;
+    }
+
     final index = cases.indexWhere((c) => c.id == caseId);
     if (index != -1) {
       final oldCase = cases[index];
@@ -2098,7 +2732,21 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void changeCaseTeam(String caseId, TeamType newTeam) {
+  void changeCaseTeam(String caseId, TeamType newTeam) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        final supabaseId = _findSupabaseCaseId(caseId);
+        final teamUuid = await _getTeamUuid(newTeam);
+        if (supabaseId != null && teamUuid != null) {
+          await caseRepository.updateCase(supabaseId, {
+            'team_id': teamUuid,
+          });
+          await loadCasesFromSupabase();
+        }
+      } catch (_) {}
+      return;
+    }
+
     final index = cases.indexWhere((c) => c.id == caseId);
     if (index != -1) {
       final oldCase = cases[index];
@@ -2122,7 +2770,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void changeCasePriority(String caseId, CasePriority newPriority) {
+  void changeCasePriority(String caseId, CasePriority newPriority) async {
+    if (dataMode == AppDataMode.real) {
+      try {
+        final supabaseId = _findSupabaseCaseId(caseId);
+        if (supabaseId != null) {
+          await caseRepository.updateCase(supabaseId, {
+            'priority': newPriority.name,
+          });
+          await loadCasesFromSupabase();
+        }
+      } catch (_) {}
+      return;
+    }
+
     final index = cases.indexWhere((c) => c.id == caseId);
     if (index != -1) {
       final oldCase = cases[index];

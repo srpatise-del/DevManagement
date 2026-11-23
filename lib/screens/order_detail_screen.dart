@@ -1,8 +1,15 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/app_models.dart';
+import '../models/file_attachment_model.dart';
+import '../config/attachment_config.dart';
+import '../services/storage_service.dart';
+import '../widgets/attachment_picker_widget.dart';
+import '../widgets/full_screen_image_viewer.dart';
 import 'edit_order_screen.dart';
 
 class OrderDetailScreen extends StatefulWidget {
@@ -40,9 +47,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
   void dispose() {
     _tabController.dispose();
     _commentController.dispose();
+    _editOrderCommentController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
+
+  List<PendingFileAttachment> _pendingOrderCommentFiles = [];
+  bool _isSendingComment = false;
+  String? _editingOrderCommentId;
+  final TextEditingController _editOrderCommentController = TextEditingController();
+  bool _isUpdatingOrderComment = false;
 
   void _onScroll() {
     if (_tabBarKey.currentContext != null) {
@@ -88,11 +102,137 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
     });
   }
 
-  void _sendComment(AppState appState, String orderId) {
+  Future<void> _pickOrderCommentAttachment({bool imagesOnly = false}) async {
+    if (_pendingOrderCommentFiles.length >= AttachmentConfig.maxFileCount) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('แนบไฟล์ได้สูงสุด ${AttachmentConfig.maxFileCount} ไฟล์ ต่อความคิดเห็น'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: imagesOnly ? FileType.image : FileType.custom,
+        allowedExtensions: imagesOnly ? null : AttachmentConfig.allAllowedExtensions.toList(),
+        withData: true,
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final List<PendingFileAttachment> newFiles = List.from(_pendingOrderCommentFiles);
+      final List<String> errors = [];
+
+      for (var file in result.files) {
+        if (newFiles.length >= AttachmentConfig.maxFileCount) {
+          errors.add('เกินโควตาแนบไฟล์สูงสุด ${AttachmentConfig.maxFileCount} ไฟล์');
+          break;
+        }
+
+        var fileName = file.name;
+        final fileSize = file.size;
+        var ext = AttachmentConfig.resolveExtension(
+          fileName: fileName,
+          fileExtension: file.extension,
+        );
+
+        if (ext.isEmpty && imagesOnly) {
+          ext = 'jpg';
+        }
+
+        if (!fileName.contains('.') && ext.isNotEmpty) {
+          fileName = '$fileName.$ext';
+        }
+
+        final err = AttachmentConfig.validateFile(
+          fileName: fileName,
+          fileSizeBytes: fileSize,
+          fileExtension: ext,
+        );
+
+        if (err != null) {
+          errors.add(err);
+          continue;
+        }
+
+        if (newFiles.any((f) => f.name == fileName && f.sizeBytes == fileSize)) {
+          continue;
+        }
+
+        newFiles.add(PendingFileAttachment(
+          name: fileName,
+          sizeBytes: fileSize,
+          extension: ext,
+          bytes: file.bytes,
+          path: kIsWeb ? null : file.path,
+        ));
+      }
+
+      if (errors.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errors.join('\n')),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+
+      setState(() {
+        _pendingOrderCommentFiles = newFiles;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('เกิดข้อผิดพลาดในการเลือกไฟล์: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _sendComment(AppState appState, String orderId) async {
     final text = _commentController.text.trim();
-    if (text.isNotEmpty) {
-      appState.addOrderComment(orderId, text);
-      _commentController.clear();
+    if (text.isEmpty && _pendingOrderCommentFiles.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _isSendingComment = true;
+    });
+
+    try {
+      await appState.addOrderComment(
+        orderId,
+        text,
+        pendingFiles: _pendingOrderCommentFiles,
+      );
+
+      if (mounted) {
+        _commentController.clear();
+        setState(() {
+          _pendingOrderCommentFiles = [];
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('เกิดข้อผิดพลาดในการส่งความคิดเห็น: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSendingComment = false;
+        });
+      }
     }
   }
 
@@ -297,7 +437,81 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                 ],
               ),
               const SizedBox(height: 12),
-              const Text('เลือกไฟล์ตัวอย่าง หรือระบุชื่อไฟล์:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  try {
+                    final result = await FilePicker.platform.pickFiles(
+                      allowMultiple: false,
+                      type: FileType.custom,
+                      allowedExtensions: AttachmentConfig.allAllowedExtensions.toList(),
+                      withData: true,
+                    );
+                    if (result != null && result.files.isNotEmpty) {
+                      final f = result.files.first;
+                      final err = AttachmentConfig.validateFile(
+                        fileName: f.name,
+                        fileSizeBytes: f.size,
+                      );
+                      if (err != null) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(content: Text(err), backgroundColor: Colors.red),
+                          );
+                        }
+                        return;
+                      }
+
+                      final ext = f.extension ?? (f.name.contains('.') ? f.name.split('.').last : 'file');
+                      final sizeStr = AttachmentConfig.formatFileSize(f.size);
+
+                      if (f.bytes != null) {
+                        try {
+                          final fileModel = await StorageService.uploadFile(
+                            itemId: order.id,
+                            isCase: false,
+                            bytes: f.bytes!,
+                            fileName: f.name,
+                            sizeBytes: f.size,
+                          );
+                          appState.addOrderAttachment(
+                            order.id,
+                            fileModel.fileName,
+                            fileModel.fileSize,
+                            fileModel.fileType,
+                            storagePath: fileModel.storagePath,
+                            url: fileModel.url,
+                          );
+                        } catch (_) {
+                          appState.addOrderAttachment(order.id, f.name, sizeStr, ext);
+                        }
+                      } else {
+                        appState.addOrderAttachment(order.id, f.name, sizeStr, ext);
+                      }
+
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('แนบไฟล์ ${f.name} สำเร็จแล้ว')),
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        SnackBar(content: Text('เลือกไฟล์ไม่สำเร็จ: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.folder_open, size: 20),
+                label: const Text('เลือกไฟล์จากอุปกรณ์ (Choose File from device)', style: TextStyle(fontSize: 14)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('หรือเลือกไฟล์ตัวอย่าง:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -308,38 +522,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                   _buildSampleFileChip(appState, order, ctx, 'error_stack_trace.txt', '120 KB', 'txt'),
                   _buildSampleFileChip(appState, order, ctx, 'tax_invoice.pdf', '850 KB', 'pdf'),
                 ],
-              ),
-              const Divider(height: 24),
-              TextField(
-                controller: fileNameController,
-                decoration: const InputDecoration(
-                  hintText: 'หรือพิมพ์ชื่อไฟล์ที่ต้องการ (เช่น document.pdf)',
-                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    final name = fileNameController.text.trim();
-                    if (name.isNotEmpty) {
-                      final ext = name.split('.').last.toLowerCase();
-                      appState.addOrderAttachment(order.id, name, '1.5 MB', ext);
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('แนบไฟล์ $name สำเร็จแล้ว')),
-                      );
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text('อัปโหลดไฟล์', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
               ),
             ],
           ),
@@ -808,52 +990,133 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                                         },
                                       ),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                   decoration: const BoxDecoration(
                                     color: Colors.white,
                                     border: Border(top: BorderSide(color: AppColors.cardBorder)),
                                   ),
-                                  child: Row(
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.crop_original, color: AppColors.textMuted, size: 20),
-                                        onPressed: () {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(content: Text('เลือกรูปภาพเรียบร้อย')),
-                                          );
-                                        },
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.attach_file, color: AppColors.textMuted, size: 20),
-                                        onPressed: () {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(content: Text('เลือกไฟล์เรียบร้อย')),
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Expanded(
-                                        child: TextField(
-                                          controller: _commentController,
-                                          decoration: const InputDecoration(
-                                            hintText: 'พิมพ์ความคิดเห็น...',
-                                            hintStyle: TextStyle(fontSize: 13, color: AppColors.textMuted),
-                                            contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                            fillColor: Color(0xFFF8FAFC),
+                                  child: SafeArea(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (_pendingOrderCommentFiles.isNotEmpty)
+                                          Container(
+                                            height: 56,
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            color: const Color(0xFFF1F5F9),
+                                            child: ListView.builder(
+                                              scrollDirection: Axis.horizontal,
+                                              itemCount: _pendingOrderCommentFiles.length,
+                                              itemBuilder: (ctx, idx) {
+                                                final file = _pendingOrderCommentFiles[idx];
+                                                final category = AttachmentConfig.getCategory(file.extension);
+
+                                                return Container(
+                                                  margin: const EdgeInsets.only(right: 8),
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.white,
+                                                    borderRadius: BorderRadius.circular(8),
+                                                    border: Border.all(color: AppColors.cardBorder),
+                                                  ),
+                                                  child: Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      if (file.isImage && file.bytes != null)
+                                                        ClipRRect(
+                                                          borderRadius: BorderRadius.circular(4),
+                                                          child: Image.memory(
+                                                            file.bytes!,
+                                                            width: 28,
+                                                            height: 28,
+                                                            fit: BoxFit.cover,
+                                                          ),
+                                                        )
+                                                      else
+                                                        Icon(category.icon, size: 18, color: category.color),
+                                                      const SizedBox(width: 6),
+                                                      Column(
+                                                        mainAxisAlignment: MainAxisAlignment.center,
+                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        children: [
+                                                          ConstrainedBox(
+                                                            constraints: const BoxConstraints(maxWidth: 90),
+                                                            child: Text(
+                                                              file.name,
+                                                              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                                                              maxLines: 1,
+                                                              overflow: TextOverflow.ellipsis,
+                                                            ),
+                                                          ),
+                                                          Text(
+                                                            file.formattedSize,
+                                                            style: const TextStyle(fontSize: 8, color: AppColors.textMuted),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      const SizedBox(width: 4),
+                                                      GestureDetector(
+                                                        onTap: () {
+                                                          setState(() {
+                                                            _pendingOrderCommentFiles.removeAt(idx);
+                                                          });
+                                                        },
+                                                        child: const Icon(Icons.close, size: 14, color: Colors.red),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              },
+                                            ),
                                           ),
-                                          onSubmitted: (_) => _sendComment(appState, order.id),
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                          child: Row(
+                                            children: [
+                                              IconButton(
+                                                icon: const Icon(Icons.image_outlined, color: AppColors.primary, size: 22),
+                                                tooltip: 'แนบรูปภาพ',
+                                                onPressed: _isSendingComment ? null : () => _pickOrderCommentAttachment(imagesOnly: true),
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(Icons.attach_file, color: AppColors.primary, size: 22),
+                                                tooltip: 'แนบไฟล์เอกสาร',
+                                                onPressed: _isSendingComment ? null : () => _pickOrderCommentAttachment(imagesOnly: false),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: TextField(
+                                                  controller: _commentController,
+                                                  enabled: !_isSendingComment,
+                                                  decoration: const InputDecoration(
+                                                    hintText: 'พิมพ์ความคิดเห็น...',
+                                                    hintStyle: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                                                    contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                                    fillColor: Color(0xFFF8FAFC),
+                                                  ),
+                                                  onSubmitted: (_) => _sendComment(appState, order.id),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              CircleAvatar(
+                                                radius: 20,
+                                                backgroundColor: AppColors.primary,
+                                                child: _isSendingComment
+                                                    ? const SizedBox(
+                                                        width: 18,
+                                                        height: 18,
+                                                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                                      )
+                                                    : IconButton(
+                                                        icon: const Icon(Icons.send, color: Colors.white, size: 18),
+                                                        onPressed: () => _sendComment(appState, order.id),
+                                                      ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      CircleAvatar(
-                                        radius: 20,
-                                        backgroundColor: AppColors.primary,
-                                        child: IconButton(
-                                          icon: const Icon(Icons.send, color: Colors.white, size: 18),
-                                          onPressed: () => _sendComment(appState, order.id),
-                                        ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ],
@@ -993,8 +1256,41 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
     );
   }
 
+  void _showDeleteOrderCommentDialog(BuildContext context, AppState appState, String orderId, String commentId) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ลบความคิดเห็น'),
+        content: const Text('คุณแน่ใจหรือไม่ว่าต้องการลบความคิดเห็นในออเดอร์นี้?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              appState.deleteOrderComment(orderId, commentId);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('ลบความคิดเห็นสำเร็จ'), backgroundColor: Colors.green),
+              );
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('ลบ', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCommentItem(CommentModel comment) {
     final role = comment.author.role;
+    final appState = Provider.of<AppState>(context, listen: false);
+    final currentUser = appState.currentUser;
+    final bool canEdit = currentUser != null && OrderRolePermissionHelper.canEditComment(currentUser, comment);
+    final bool canDelete = currentUser != null && OrderRolePermissionHelper.canDeleteComment(currentUser, comment);
+    final bool isEditing = _editingOrderCommentId == comment.id;
+
     Color roleBg;
     Color roleText;
 
@@ -1033,12 +1329,140 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                       decoration: BoxDecoration(color: roleBg, borderRadius: BorderRadius.circular(10)),
                       child: Text(role, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: roleText)),
                     ),
+                    const Spacer(),
+                    Text(comment.dateText, style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                    if (canEdit || canDelete)
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert, size: 16, color: Colors.grey),
+                        padding: EdgeInsets.zero,
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            setState(() {
+                              _editingOrderCommentId = comment.id;
+                              _editOrderCommentController.text = comment.content;
+                            });
+                          } else if (value == 'delete') {
+                            _showDeleteOrderCommentDialog(context, appState, widget.orderObj.id, comment.id);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          if (canEdit)
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Text('แก้ไข', style: TextStyle(fontSize: 13)),
+                            ),
+                          if (canDelete)
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('ลบ', style: TextStyle(fontSize: 13, color: Colors.red)),
+                            ),
+                        ],
+                      ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text(comment.content, style: const TextStyle(fontSize: 13, color: AppColors.textPrimary, height: 1.3)),
-                const SizedBox(height: 2),
-                Text(comment.dateText, style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+
+                if (isEditing) ...[
+                  TextField(
+                    controller: _editOrderCommentController,
+                    maxLines: null,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.all(8),
+                      isDense: true,
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: _isUpdatingOrderComment ? null : () {
+                          setState(() {
+                            _editingOrderCommentId = null;
+                            _editOrderCommentController.clear();
+                          });
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('ยกเลิก', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: _isUpdatingOrderComment ? null : () async {
+                          final newText = _editOrderCommentController.text.trim();
+                          if (newText.isEmpty) return;
+                          
+                          setState(() { _isUpdatingOrderComment = true; });
+                          try {
+                            appState.editOrderComment(widget.orderObj.id, comment.id, newText);
+                            if (mounted) {
+                              setState(() {
+                                _editingOrderCommentId = null;
+                                _isUpdatingOrderComment = false;
+                              });
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              setState(() { _isUpdatingOrderComment = false; });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('เกิดข้อผิดพลาด: $e'), backgroundColor: Colors.red),
+                              );
+                            }
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          backgroundColor: AppColors.primary,
+                        ),
+                        child: _isUpdatingOrderComment
+                            ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Text('บันทึก', style: TextStyle(fontSize: 12, color: Colors.white)),
+                      ),
+                    ],
+                  ),
+                ] else if (comment.content.isNotEmpty)
+                  Text(comment.content, style: const TextStyle(fontSize: 13, color: AppColors.textPrimary, height: 1.3)),
+                
+                if (comment.attachedFiles.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: comment.attachedFiles.map((att) {
+                      return FileAttachmentCardWidget(attachment: att);
+                    }).toList(),
+                  ),
+                ] else if (comment.attachedImageUrl != null) ...[
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onTap: () => FullScreenImageViewer.show(
+                      context,
+                      imageUrl: comment.attachedImageUrl,
+                      title: 'รูปภาพแนบในออเดอร์',
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        comment.attachedImageUrl!,
+                        width: 140,
+                        height: 90,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 140,
+                          height: 90,
+                          color: Colors.grey.shade200,
+                          child: const Icon(Icons.broken_image, color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

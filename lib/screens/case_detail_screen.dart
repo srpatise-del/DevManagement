@@ -5,8 +5,11 @@ import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/app_models.dart';
 import '../models/role_permission.dart';
+import '../models/file_attachment_model.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/priority_badge.dart';
+import '../widgets/attachment_picker_widget.dart';
+import '../widgets/full_screen_image_viewer.dart';
 import 'comment_screen.dart';
 import 'activity_log_screen.dart';
 import 'edit_case_screen.dart';
@@ -35,6 +38,13 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
       if (_tabController.indexIsChanging) {
         _scrollToTabBar();
       }
+      if (_tabController.index == 0 && _scrollController.hasClients && _scrollController.offset < 200) {
+        if (_isSticky) {
+          setState(() {
+            _isSticky = false;
+          });
+        }
+      }
     });
   }
 
@@ -46,16 +56,13 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
   }
 
   void _onScroll() {
-    if (_tabBarKey.currentContext != null) {
-      final box = _tabBarKey.currentContext!.findRenderObject() as RenderBox?;
-      if (box != null) {
-        final pos = box.localToGlobal(Offset.zero);
-        final sticky = pos.dy <= 80;
-        if (sticky != _isSticky) {
-          setState(() {
-            _isSticky = sticky;
-          });
-        }
+    if (_scrollController.hasClients) {
+      const stickyThreshold = 170.0;
+      final sticky = _scrollController.offset > stickyThreshold;
+      if (sticky != _isSticky) {
+        setState(() {
+          _isSticky = sticky;
+        });
       }
     }
   }
@@ -711,19 +718,22 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
                       const SizedBox(height: 12),
 
                       // Tab Bar
-                      TabBar(
-                        key: _tabBarKey,
-                        controller: _tabController,
-                        labelColor: AppColors.primary,
-                        unselectedLabelColor: AppColors.textSecondary,
-                        indicatorColor: AppColors.primary,
-                        indicatorWeight: 3,
-                        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                        tabs: [
-                          const Tab(text: 'รายละเอียด'),
-                          Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
-                          const Tab(text: 'Activity Log'),
-                        ],
+                      Opacity(
+                        opacity: _isSticky ? 0.0 : 1.0,
+                        child: TabBar(
+                          key: _tabBarKey,
+                          controller: _tabController,
+                          labelColor: AppColors.primary,
+                          unselectedLabelColor: AppColors.textSecondary,
+                          indicatorColor: AppColors.primary,
+                          indicatorWeight: 3,
+                          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          tabs: [
+                            const Tab(text: 'รายละเอียด'),
+                            Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
+                            const Tab(text: 'Activity Log'),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -751,35 +761,43 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
               ],
             ),
           ),
-          if (_isSticky)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: Material(
-                elevation: 4,
-                color: Colors.white,
-                child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: TabBar(
-                      controller: _tabController,
-                      labelColor: AppColors.primary,
-                      unselectedLabelColor: AppColors.textSecondary,
-                      indicatorColor: AppColors.primary,
-                      indicatorWeight: 3,
-                      labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                      tabs: [
-                        const Tab(text: 'รายละเอียด'),
-                        Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
-                        const Tab(text: 'Activity Log'),
-                      ],
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            top: _isSticky ? 0 : -70,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              ignoring: !_isSticky,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: _isSticky ? 1.0 : 0.0,
+                child: Material(
+                  elevation: 4,
+                  color: Colors.white,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: TabBar(
+                        controller: _tabController,
+                        labelColor: AppColors.primary,
+                        unselectedLabelColor: AppColors.textSecondary,
+                        indicatorColor: AppColors.primary,
+                        indicatorWeight: 3,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        tabs: [
+                          const Tab(text: 'รายละเอียด'),
+                          Tab(text: 'ความคิดเห็น (${caseObj.comments.length})'),
+                          const Tab(text: 'Activity Log'),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
+          ),
         ],
       ),
       bottomNavigationBar: canChangeStatus
@@ -856,25 +874,51 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
           const SizedBox(height: 20),
 
           // Attached Images Section
-          const Text(
-            'รูปภาพแนบ',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+          if (caseObj.attachedImages.isNotEmpty) ...[
+            const Text(
+              'รูปภาพแนบ',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _buildMockImageThumb('Dashboard Error 1'),
-              const SizedBox(width: 8),
-              _buildMockImageThumb('Console Log'),
-              const SizedBox(width: 8),
-              _buildMockImageThumbOverlay('+2'),
-            ],
-          ),
-          const SizedBox(height: 20),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 100,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: caseObj.attachedImages.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (ctx, idx) {
+                  final imgUrl = caseObj.attachedImages[idx];
+                  return GestureDetector(
+                    onTap: () => FullScreenImageViewer.show(
+                      context,
+                      imageUrl: imgUrl,
+                      title: 'รูปภาพแนบเคส ${caseObj.id}',
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        imgUrl,
+                        width: 140,
+                        height: 100,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 140,
+                          height: 100,
+                          color: Colors.grey.shade200,
+                          child: const Icon(Icons.broken_image, color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
 
           // Attached Files Section
           const Text(
@@ -886,13 +930,21 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
             ),
           ),
           const SizedBox(height: 10),
-          if (caseObj.attachedFiles.isEmpty)
-            _buildFileCard('error_screenshot.png', '2.4 MB')
+          if (caseObj.attachedFiles.isEmpty && caseObj.attachedImages.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'ไม่มีไฟล์แนบในเคสนี้',
+                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
+            )
           else
             ...caseObj.attachedFiles.map(
               (f) => Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: _buildFileCard(f.fileName, f.fileSize),
+                child: FileAttachmentCardWidget(
+                  attachment: FileAttachmentModel.fromCaseFileAttachment(f),
+                ),
               ),
             ),
         ],
@@ -925,98 +977,6 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildMockImageThumb(String label) {
-    return Expanded(
-      child: Container(
-        height: 80,
-        decoration: BoxDecoration(
-          color: const Color(0xFFE2E8F0),
-          borderRadius: BorderRadius.circular(8),
-          image: const DecorationImage(
-            image: NetworkImage('https://picsum.photos/200'),
-            fit: BoxFit.cover,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMockImageThumbOverlay(String label) {
-    return Expanded(
-      child: Container(
-        height: 80,
-        decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFileCard(String name, String size) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppColors.primaryLight,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.insert_drive_file, color: AppColors.primary, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                Text(
-                  size,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert, size: 18, color: AppColors.textMuted),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('กำลังดาวน์โหลดไฟล์ $name...')),
-              );
-            },
-          ),
-        ],
-      ),
     );
   }
 }
