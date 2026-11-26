@@ -243,7 +243,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
   void _showReassignSheet(BuildContext context, AppState appState, CaseModel caseObj) {
     UserModel? selectedAssignee = caseObj.assignee;
     String searchQuery = '';
-    final teamMembers = appState.registeredUsers.where((u) => u.team == caseObj.team).toList();
+    final teamMembers = appState.getAssignableUsersForTeam(caseObj.team);
 
     showModalBottomSheet(
       context: context,
@@ -350,7 +350,8 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
                           )
                         else
                           ...filteredUsers.map((u) {
-                            final isSelected = selectedAssignee?.id == u.id;
+                            final isSelected = selectedAssignee == u;
+                            final teamLabel = u.team?.label ?? 'ยังไม่สังกัดทีม';
                             return ListTile(
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                               leading: CircleAvatar(
@@ -358,7 +359,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> with SingleTickerPr
                                 child: Text(u.avatarUrl, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                               ),
                               title: Text(u.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                              subtitle: Text(u.role, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                              subtitle: Text('${u.role} • $teamLabel', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                               trailing: isSelected ? const Icon(Icons.check_circle, color: AppColors.primary) : null,
                               onTap: () {
                                 setStateModal(() {

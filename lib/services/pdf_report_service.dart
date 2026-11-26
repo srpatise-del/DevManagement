@@ -226,7 +226,7 @@ class PdfReportService {
           header: (pw.Context ctx) => pw.Container(
             alignment: pw.Alignment.centerRight,
             margin: const pw.EdgeInsets.only(bottom: 10),
-            child: pw.Text('Dev Case Management System', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
+            child: pw.Text('DevIncident - Case Management System', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
           ),
           footer: (pw.Context ctx) => pw.Container(
             alignment: pw.Alignment.centerRight,
@@ -234,7 +234,7 @@ class PdfReportService {
             child: pw.Text('หน้า ${ctx.pageNumber} จาก ${ctx.pagesCount}', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
           ),
           build: (pw.Context ctx) => [
-            _buildHeaderBanner('Dev Case Management Report', nowStr, font, fontBold, '#1D61E7'),
+            _buildHeaderBanner('DevIncident - Cases Report', nowStr, font, fontBold, '#1D61E7'),
             pw.SizedBox(height: 14),
             pw.Container(
               padding: const pw.EdgeInsets.all(10),
@@ -274,7 +274,7 @@ class PdfReportService {
       );
 
       final pdfBytes = await doc.save();
-      final fileName = 'dev_case_report_${DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now())}.pdf';
+      final fileName = 'devincident_cases_report_${DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now())}.pdf';
       await Printing.sharePdf(bytes: pdfBytes, filename: fileName);
 
       if (context.mounted) {
@@ -333,7 +333,7 @@ class PdfReportService {
           header: (pw.Context ctx) => pw.Container(
             alignment: pw.Alignment.centerRight,
             margin: const pw.EdgeInsets.only(bottom: 10),
-            child: pw.Text('Dev Order Management System', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
+            child: pw.Text('DevIncident - Order Management System', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
           ),
           footer: (pw.Context ctx) => pw.Container(
             alignment: pw.Alignment.centerRight,
@@ -341,7 +341,7 @@ class PdfReportService {
             child: pw.Text('หน้า ${ctx.pageNumber} จาก ${ctx.pagesCount}', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
           ),
           build: (pw.Context ctx) => [
-            _buildHeaderBanner('Dev Order Management Report', nowStr, font, fontBold, '#7C3AED'),
+            _buildHeaderBanner('DevIncident - Orders Report', nowStr, font, fontBold, '#7C3AED'),
             pw.SizedBox(height: 14),
             pw.Container(
               padding: const pw.EdgeInsets.all(10),
@@ -381,7 +381,7 @@ class PdfReportService {
       );
 
       final pdfBytes = await doc.save();
-      final fileName = 'dev_order_report_${DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now())}.pdf';
+      final fileName = 'devincident_orders_report_${DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now())}.pdf';
       await Printing.sharePdf(bytes: pdfBytes, filename: fileName);
 
       if (context.mounted) {
@@ -437,7 +437,7 @@ class PdfReportService {
           header: (pw.Context ctx) => pw.Container(
             alignment: pw.Alignment.centerRight,
             margin: const pw.EdgeInsets.only(bottom: 10),
-            child: pw.Text('DevCase & Order Management System', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
+            child: pw.Text('DevIncident - Incident & Order Management', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
           ),
           footer: (pw.Context ctx) => pw.Container(
             alignment: pw.Alignment.centerRight,
@@ -445,7 +445,7 @@ class PdfReportService {
             child: pw.Text('หน้า ${ctx.pageNumber} จาก ${ctx.pagesCount}', style: pw.TextStyle(fontSize: 10, color: PdfColors.grey600, font: font)),
           ),
           build: (pw.Context ctx) => [
-            _buildHeaderBanner('DevCase & Orders Summary Report', nowStr, font, fontBold, '#0F172A'),
+            _buildHeaderBanner('DevIncident - Full Summary Report', nowStr, font, fontBold, '#0F172A'),
             pw.SizedBox(height: 14),
             pw.Container(
               padding: const pw.EdgeInsets.all(10),
@@ -473,7 +473,7 @@ class PdfReportService {
       );
 
       final pdfBytes = await doc.save();
-      final fileName = 'dev_combined_report_${DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now())}.pdf';
+      final fileName = 'devincident_summary_report_${DateFormat('yyyy-MM-dd_HHmm').format(DateTime.now())}.pdf';
       await Printing.sharePdf(bytes: pdfBytes, filename: fileName);
 
       if (context.mounted) {

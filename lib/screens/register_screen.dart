@@ -92,7 +92,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           metadata['requested_team_id'] = _selectedTeamId;
         }
 
-        await Supabase.instance.client.auth.signUp(
+        final response = await Supabase.instance.client.auth.signUp(
           email: email,
           password: password,
           data: metadata,
@@ -102,11 +102,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         setState(() => _isLoading = false);
 
+        final successMsg = response.session != null
+            ? 'สมัครสมาชิกสำเร็จ! สามารถเข้าสู่ระบบได้ทันที'
+            : 'สมัครสมาชิกสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันบัญชีของคุณ';
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('สมัครสมาชิกสำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันบัญชีของคุณ'),
+          SnackBar(
+            content: Text(successMsg),
             backgroundColor: Colors.green,
-            duration: Duration(seconds: 4),
+            duration: const Duration(seconds: 4),
           ),
         );
 
@@ -119,9 +123,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
         final errLower = e.message.toLowerCase();
         if (errLower.contains('already registered') || errLower.contains('already exists')) {
           message = 'อีเมลนี้ถูกใช้งานในระบบแล้ว';
+        } else if (errLower.contains('sending confirmation') || errLower.contains('smtp')) {
+          message = 'ไม่สามารถส่งอีเมลยืนยันได้ กรุณาตรวจสอบการตั้งค่า SMTP ใน Supabase';
+        } else if (errLower.contains('rate limit') || errLower.contains('over_email_send_rate_limit')) {
+          message = 'มีการส่งอีเมลถี่เกินไป กรุณารอสักครู่แล้วลองใหม่';
         } else if (errLower.contains('password')) {
           message = 'รหัสผ่านไม่ตรงตามเงื่อนไขความปลอดภัย';
-        } else if (errLower.contains('email')) {
+        } else if (errLower.contains('unable to validate email') ||
+            errLower.contains('invalid email') ||
+            (errLower.contains('email') && errLower.contains('invalid'))) {
           message = 'รูปแบบอีเมลไม่ถูกต้อง';
         } else {
           message = e.message;
@@ -193,7 +203,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   Padding(
                     padding: const EdgeInsets.only(left: 12),
                     child: Text(
-                      'กรอกข้อมูลเพื่อลงทะเบียนเข้าใช้งาน DevCase',
+                      'กรอกข้อมูลเพื่อลงทะเบียนเข้าใช้งาน DevIncident',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.white.withOpacity(0.8),

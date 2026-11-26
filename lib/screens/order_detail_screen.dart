@@ -387,7 +387,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
             ),
             const Divider(height: 1),
             ...appState.registeredUsers.map((u) {
-              final isCurrent = order.assignee?.id == u.id;
+              final isCurrent = order.assignee == u;
               return ListTile(
                 leading: CircleAvatar(
                   backgroundColor: AppColors.primary,

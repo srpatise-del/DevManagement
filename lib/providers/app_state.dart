@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -23,6 +24,17 @@ class AppState extends ChangeNotifier {
   final OrderRepository orderRepository = OrderRepository();
   final NotificationRepository notificationRepository = NotificationRepository();
   RealtimeChannel? _notificationsChannel;
+  RealtimeChannel? _dataSyncChannel;
+  Timer? _casesSyncDebounce;
+  Timer? _ordersSyncDebounce;
+  Timer? _profilesSyncDebounce;
+  bool _isReloadingCases = false;
+  bool _pendingCasesReload = false;
+  bool _isReloadingOrders = false;
+  bool _pendingOrdersReload = false;
+  bool _isReloadingProfiles = false;
+  bool _pendingProfilesReload = false;
+  bool _pendingCurrentUserRefresh = false;
   AppDataMode dataMode = AppDataMode.initializing;
   // Active users directory (populated from Supabase public.profiles)
   List<UserModel> registeredUsers = [];
@@ -181,6 +193,229 @@ class AppState extends ChangeNotifier {
     _notificationsChannel = null;
   }
 
+  void _scheduleCasesReload() {
+    if (dataMode != AppDataMode.real) return;
+    _casesSyncDebounce?.cancel();
+    _casesSyncDebounce = Timer(const Duration(milliseconds: 350), _runCasesReload);
+  }
+
+  Future<void> _runCasesReload() async {
+    if (dataMode != AppDataMode.real) return;
+    if (_isReloadingCases) {
+      _pendingCasesReload = true;
+      return;
+    }
+    _isReloadingCases = true;
+    try {
+      await loadCasesFromSupabase();
+    } finally {
+      _isReloadingCases = false;
+      if (_pendingCasesReload && dataMode == AppDataMode.real) {
+        _pendingCasesReload = false;
+        _runCasesReload();
+      }
+    }
+  }
+
+  void _scheduleOrdersReload() {
+    if (dataMode != AppDataMode.real) return;
+    _ordersSyncDebounce?.cancel();
+    _ordersSyncDebounce = Timer(const Duration(milliseconds: 350), _runOrdersReload);
+  }
+
+  Future<void> _runOrdersReload() async {
+    if (dataMode != AppDataMode.real) return;
+    if (_isReloadingOrders) {
+      _pendingOrdersReload = true;
+      return;
+    }
+    _isReloadingOrders = true;
+    try {
+      await loadOrdersFromSupabase();
+    } finally {
+      _isReloadingOrders = false;
+      if (_pendingOrdersReload && dataMode == AppDataMode.real) {
+        _pendingOrdersReload = false;
+        _runOrdersReload();
+      }
+    }
+  }
+
+  void _scheduleProfilesReload({bool refreshCurrentUser = false}) {
+    if (dataMode != AppDataMode.real) return;
+    if (refreshCurrentUser) {
+      _pendingCurrentUserRefresh = true;
+    }
+    _profilesSyncDebounce?.cancel();
+    _profilesSyncDebounce = Timer(const Duration(milliseconds: 450), _runProfilesReload);
+  }
+
+  Future<void> _runProfilesReload() async {
+    if (dataMode != AppDataMode.real) return;
+    if (_isReloadingProfiles) {
+      _pendingProfilesReload = true;
+      return;
+    }
+    _isReloadingProfiles = true;
+    final shouldRefreshMe = _pendingCurrentUserRefresh;
+    _pendingCurrentUserRefresh = false;
+    try {
+      await loadUsersFromSupabase();
+      if (shouldRefreshMe) {
+        await _refreshCurrentUserInPlace();
+      }
+    } finally {
+      _isReloadingProfiles = false;
+      if ((_pendingProfilesReload || _pendingCurrentUserRefresh) && dataMode == AppDataMode.real) {
+        _pendingProfilesReload = false;
+        _runProfilesReload();
+      }
+    }
+  }
+
+  Future<void> _refreshCurrentUserInPlace() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user == null || dataMode != AppDataMode.real) return;
+
+      final profileRes = await Supabase.instance.client
+          .from('profiles')
+          .select('*, teams!profiles_team_id_fkey(id, name, code), requested_team:teams!profiles_requested_team_id_fkey(id, name, code)')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (profileRes != null) {
+        final updated = _mapProfileRowToUserModel(profileRes);
+        final accessChanged = updated.role != currentUser.role ||
+            updated.team != currentUser.team ||
+            updated.teamStatus != currentUser.teamStatus ||
+            updated.isActive != currentUser.isActive;
+
+        currentUser = updated;
+        notifyListeners();
+
+        if (accessChanged) {
+          _scheduleCasesReload();
+          _scheduleOrdersReload();
+        }
+      }
+    } catch (e) {
+      debugPrint('[AppState._refreshCurrentUserInPlace] Error: $e');
+    }
+  }
+
+  void _startDataRealtime() {
+    final userId = currentUser.authUserId ?? Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) return;
+
+    final client = Supabase.instance.client;
+    if (_dataSyncChannel != null) {
+      client.removeChannel(_dataSyncChannel!);
+      _dataSyncChannel = null;
+    }
+
+    final channel = client.channel('public:app_data_sync:$userId');
+    channel
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'cases',
+        callback: (_) => _scheduleCasesReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'case_comments',
+        callback: (_) => _scheduleCasesReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'case_attachments',
+        callback: (_) => _scheduleCasesReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'case_comment_likes',
+        callback: (_) => _scheduleCasesReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'orders',
+        callback: (_) => _scheduleOrdersReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'order_items',
+        callback: (_) => _scheduleOrdersReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'order_comments',
+        callback: (_) => _scheduleOrdersReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'order_attachments',
+        callback: (_) => _scheduleOrdersReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'order_comment_likes',
+        callback: (_) => _scheduleOrdersReload(),
+      )
+      ..onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'profiles',
+        callback: (payload) {
+          final changedId = payload.newRecord['id']?.toString() ?? payload.oldRecord['id']?.toString();
+          final isMe = changedId != null && changedId == userId;
+          _scheduleProfilesReload(refreshCurrentUser: isMe);
+        },
+      )
+      ..subscribe();
+
+    _dataSyncChannel = channel;
+  }
+
+  Future<void> syncAllFromSupabase() async {
+    if (dataMode != AppDataMode.real || !isLoggedIn) return;
+    await Future.wait([
+      _refreshCurrentUserInPlace(),
+      loadUsersFromSupabase(),
+      _runCasesReload(),
+      _runOrdersReload(),
+      loadNotificationsFromSupabase(),
+    ]);
+  }
+
+  Future<void> _stopDataRealtime() async {
+    _casesSyncDebounce?.cancel();
+    _ordersSyncDebounce?.cancel();
+    _profilesSyncDebounce?.cancel();
+    _casesSyncDebounce = null;
+    _ordersSyncDebounce = null;
+    _profilesSyncDebounce = null;
+    _pendingCasesReload = false;
+    _pendingOrdersReload = false;
+    _pendingProfilesReload = false;
+    _pendingCurrentUserRefresh = false;
+
+    if (_dataSyncChannel != null) {
+      try {
+        await Supabase.instance.client.removeChannel(_dataSyncChannel!);
+      } catch (_) {}
+      _dataSyncChannel = null;
+    }
+  }
+
   Future<void> syncDeviceTokenToSupabase() async {
     if (dataMode != AppDataMode.real) return;
 
@@ -292,6 +527,7 @@ class AppState extends ChangeNotifier {
       loadNotificationsFromSupabase(),
     ]);
     _startNotificationsRealtime();
+    _startDataRealtime();
     // Register FCM token in background without blocking navigation
     syncDeviceTokenToSupabase();
   }
@@ -328,7 +564,9 @@ class AppState extends ChangeNotifier {
   Future<bool> approveTeam(String userId) async {
     try {
       final response = await Supabase.instance.client.rpc('approve_team', params: {'p_user_id': userId});
-      return response == true || response == null;
+      final ok = response == true || response == null;
+      if (ok) await loadUsersFromSupabase();
+      return ok;
     } catch (_) {
       return false;
     }
@@ -337,7 +575,9 @@ class AppState extends ChangeNotifier {
   Future<bool> rejectTeam(String userId) async {
     try {
       final response = await Supabase.instance.client.rpc('reject_team', params: {'p_user_id': userId});
-      return response == true || response == null;
+      final ok = response == true || response == null;
+      if (ok) await loadUsersFromSupabase();
+      return ok;
     } catch (_) {
       return false;
     }
@@ -352,7 +592,9 @@ class AppState extends ChangeNotifier {
           'p_new_role': newRole,
         },
       );
-      return response == true || response == null;
+      final ok = response == true || response == null;
+      if (ok) await loadUsersFromSupabase();
+      return ok;
     } catch (_) {
       return false;
     }
@@ -367,10 +609,28 @@ class AppState extends ChangeNotifier {
           'p_team_id': teamId,
         },
       );
-      return response == true || response == null;
+      final ok = response == true || response == null;
+      if (ok) await loadUsersFromSupabase();
+      return ok;
     } catch (_) {
       return false;
     }
+  }
+
+  /// Returns selectable assignees for a Case of [caseTeam].
+  /// Admin sees all active users (same-team members sorted first); other roles see members of [caseTeam].
+  List<UserModel> getAssignableUsersForTeam(TeamType caseTeam) {
+    if (currentUser.roleEnum == UserRole.admin) {
+      final list = List<UserModel>.from(registeredUsers);
+      list.sort((a, b) {
+        final aInTeam = a.team == caseTeam ? 0 : 1;
+        final bInTeam = b.team == caseTeam ? 0 : 1;
+        if (aInTeam != bInTeam) return aInTeam.compareTo(bInTeam);
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      return list;
+    }
+    return registeredUsers.where((u) => u.team == caseTeam).toList();
   }
 
   // Set active tab index
@@ -2265,6 +2525,7 @@ class AppState extends ChangeNotifier {
     }
     NotificationService.onTokenRefreshed = null;
     await _stopNotificationsRealtime();
+    await _stopDataRealtime();
     try {
       await Supabase.instance.client.auth.signOut();
     } catch (e) {
@@ -2285,5 +2546,23 @@ class AppState extends ChangeNotifier {
     notifications = [];
     registeredUsers = [];
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _casesSyncDebounce?.cancel();
+    _ordersSyncDebounce?.cancel();
+    _profilesSyncDebounce?.cancel();
+    if (_notificationsChannel != null) {
+      notificationRepository.unsubscribe(_notificationsChannel);
+      _notificationsChannel = null;
+    }
+    if (_dataSyncChannel != null) {
+      try {
+        Supabase.instance.client.removeChannel(_dataSyncChannel!);
+      } catch (_) {}
+      _dataSyncChannel = null;
+    }
+    super.dispose();
   }
 }

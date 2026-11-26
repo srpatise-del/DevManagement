@@ -170,7 +170,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 // App Name
                 const Text(
-                  'DevCase',
+                  'DevIncident',
                   style: TextStyle(
                     fontSize: 30,
                     fontWeight: FontWeight.bold,
@@ -182,7 +182,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 4),
 
                 const Text(
-                  'Case Management System',
+                  'Incident & Case Management',
                   style: TextStyle(
                     fontSize: 13,
                     color: Color(0xFF93C5FD),

@@ -20,10 +20,11 @@ class MainNavigationScreen extends StatefulWidget {
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _MainNavigationScreenState extends State<MainNavigationScreen> {
+class _MainNavigationScreenState extends State<MainNavigationScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     NotificationService.onNotificationOpened = _handlePushNavigation;
     NotificationService.onForegroundMessage = _handleForegroundPush;
 
@@ -36,7 +37,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      Provider.of<AppState>(context, listen: false).syncAllFromSupabase();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (NotificationService.onNotificationOpened == _handlePushNavigation) {
       NotificationService.onNotificationOpened = null;
     }

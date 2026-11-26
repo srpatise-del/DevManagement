@@ -129,8 +129,8 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
       _selectedAssignee = null;
     }
 
-    // Filter registered users belonging to the currently selected team
-    final teamMembers = appState.registeredUsers.where((u) => u.team == _selectedTeam).toList();
+    // Admin sees all active users (team members sorted first); other roles see selected team's members
+    final teamMembers = appState.getAssignableUsersForTeam(_selectedTeam);
 
     // Safely check if current _selectedAssignee belongs to teamMembers
     if (_selectedAssignee != null && !teamMembers.contains(_selectedAssignee)) {
@@ -218,7 +218,7 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
                                   _systemController.text = 'Web Application';
                                 }
                                 // Check if _selectedAssignee is still valid for new team
-                                final newTeamMembers = appState.registeredUsers.where((u) => u.team == val).toList();
+                                final newTeamMembers = appState.getAssignableUsersForTeam(val);
                                 if (_selectedAssignee != null && !newTeamMembers.contains(_selectedAssignee)) {
                                   _selectedAssignee = null;
                                 }
@@ -310,11 +310,12 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
                                 ),
                               ),
                               ...teamMembers.map((u) {
+                                final teamLabel = u.team?.label ?? 'ยังไม่สังกัดทีม';
                                 return DropdownMenuItem<UserModel?>(
                                   value: u,
                                   child: Text(
-                                    '${u.name} (${u.role})',
-                                    style: TextStyle(fontSize: 12),
+                                    '${u.name} (${u.role} • $teamLabel)',
+                                    style: const TextStyle(fontSize: 12),
                                     overflow: TextOverflow.ellipsis,
                                     maxLines: 1,
                                   ),
@@ -327,9 +328,11 @@ class _CreateCaseScreenState extends State<CreateCaseScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            teamMembers.isNotEmpty
-                                ? 'สมาชิกใน ${_selectedTeam.label} (${teamMembers.length} คน)'
-                                : 'ทีมนี้ยังไม่มีสมาชิกในระบบ (เคสจะถูกส่งให้ Team Lead / Admin จัดการ)',
+                            appState.currentUser.roleEnum == UserRole.admin
+                                ? 'ผู้ใช้งานทั้งหมดที่เลือกได้ (${teamMembers.length} คน • เรียงสมาชิก ${_selectedTeam.label} ขึ้นก่อน)'
+                                : (teamMembers.isNotEmpty
+                                    ? 'สมาชิกใน ${_selectedTeam.label} (${teamMembers.length} คน)'
+                                    : 'ทีมนี้ยังไม่มีสมาชิกในระบบ (เคสจะถูกส่งให้ Team Lead / Admin จัดการ)'),
                             style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
                           ),
                         ],

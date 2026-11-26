@@ -502,7 +502,7 @@ class ProfileScreen extends StatelessWidget {
             // App Version Footer
             Center(
               child: Text(
-                'DevCase v${AppConfig.version}',
+                'DevIncident v${AppConfig.version}',
                 style: const TextStyle(
                   fontSize: 12,
                   color: AppColors.textMuted,

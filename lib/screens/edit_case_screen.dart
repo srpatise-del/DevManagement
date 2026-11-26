@@ -133,7 +133,7 @@ class _EditCaseScreenState extends State<EditCaseScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
-    final teamMembers = appState.registeredUsers.where((u) => u.team == _selectedTeam).toList();
+    final teamMembers = appState.getAssignableUsersForTeam(_selectedTeam);
 
     // Safely check if current _selectedAssignee belongs to teamMembers
     if (_selectedAssignee != null && !teamMembers.contains(_selectedAssignee)) {
@@ -220,7 +220,7 @@ class _EditCaseScreenState extends State<EditCaseScreen> {
                                   _platformType = 'web';
                                   _systemController.text = 'Web Application';
                                 }
-                                final newTeamMembers = appState.registeredUsers.where((u) => u.team == val).toList();
+                                final newTeamMembers = appState.getAssignableUsersForTeam(val);
                                 if (_selectedAssignee != null && !newTeamMembers.contains(_selectedAssignee)) {
                                   _selectedAssignee = null;
                                 }
@@ -293,10 +293,11 @@ class _EditCaseScreenState extends State<EditCaseScreen> {
                               ),
                             ),
                             ...teamMembers.map((u) {
+                              final teamLabel = u.team?.label ?? 'ยังไม่สังกัดทีม';
                               return DropdownMenuItem<UserModel?>(
                                 value: u,
                                 child: Text(
-                                  '${u.name} (${u.role})',
+                                  '${u.name} (${u.role} • $teamLabel)',
                                   style: const TextStyle(fontSize: 12),
                                   overflow: TextOverflow.ellipsis,
                                   maxLines: 1,

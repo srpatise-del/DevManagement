@@ -47,7 +47,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(width: 8),
             const Text(
-              'DevCase',
+              'DevIncident',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,

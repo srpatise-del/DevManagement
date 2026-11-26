@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:open_file_plus/open_file_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../config/attachment_config.dart';
 import '../models/file_attachment_model.dart';
@@ -383,10 +382,11 @@ class FileAttachmentCardWidget extends StatelessWidget {
       }
     } else if (!kIsWeb && path != null && path.isNotEmpty) {
       try {
-        final result = await OpenFile.open(path);
-        if (result.type != ResultType.done && context.mounted) {
+        final fileUri = Uri.file(path);
+        final launched = await launchUrl(fileUri, mode: LaunchMode.externalApplication);
+        if (!launched && context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('ไม่สามารถเปิดไฟล์ได้: ${result.message}')),
+            const SnackBar(content: Text('ไม่สามารถเปิดไฟล์ในเครื่องได้')),
           );
         }
       } catch (e) {

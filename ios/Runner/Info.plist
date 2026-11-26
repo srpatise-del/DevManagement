@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Devcase Test</string>
+	<string>DevIncident</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>devcase_test</string>
+	<string>DevIncident</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -24,8 +24,21 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>แอปต้องการสิทธิ์เข้าถึงกล้องเพื่อถ่ายรูปแนบในเคสและออเดอร์</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>แอปต้องการสิทธิ์บันทึกรูปภาพและเอกสารที่ส่งออกลงในเครื่อง</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>แอปต้องการสิทธิ์เข้าถึงคลังรูปภาพเพื่อเลือกรูปแนบในเคสและออเดอร์</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

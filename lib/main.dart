@@ -35,7 +35,7 @@ class DevCaseApp extends StatelessWidget {
       child: Consumer<AppState>(
         builder: (context, appState, child) {
           return MaterialApp(
-            title: 'DevCase - Case Management System',
+            title: 'DevIncident - Incident & Case Management',
             debugShowCheckedModeBanner: false,
             theme: AppTheme.lightTheme,
             home: appState.isLoggedIn
