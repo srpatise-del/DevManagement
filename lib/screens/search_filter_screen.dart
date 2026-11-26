@@ -64,6 +64,17 @@ class _SearchFilterScreenState extends State<SearchFilterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final assigneeNames = <String>{
+      ...appState.registeredUsers.map((u) => u.name.trim()).where((n) => n.isNotEmpty),
+      ...appState.cases
+          .map((c) => c.assignee?.name.trim() ?? '')
+          .where((n) => n.isNotEmpty),
+    }.toList()
+      ..sort();
+    final assigneeOptions = ['ทั้งหมด', ...assigneeNames];
+    final safeAssigneeValue = assigneeOptions.contains(_tempAssignee) ? _tempAssignee : 'ทั้งหมด';
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -181,13 +192,10 @@ class _SearchFilterScreenState extends State<SearchFilterScreen> {
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
                   isExpanded: true,
-                  value: _tempAssignee,
-                  items: const [
-                    DropdownMenuItem(value: 'ทั้งหมด', child: Text('ทั้งหมด')),
-                    DropdownMenuItem(value: 'Patis', child: Text('Patis')),
-                    DropdownMenuItem(value: 'John', child: Text('John')),
-                    DropdownMenuItem(value: 'Mook', child: Text('Mook')),
-                  ],
+                  value: safeAssigneeValue,
+                  items: assigneeOptions
+                      .map((name) => DropdownMenuItem(value: name, child: Text(name)))
+                      .toList(),
                   onChanged: (val) {
                     if (val != null) setState(() => _tempAssignee = val);
                   },

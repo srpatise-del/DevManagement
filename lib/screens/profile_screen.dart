@@ -24,9 +24,10 @@ class ProfileScreen extends StatelessWidget {
             child: const Text('ยกเลิก', style: TextStyle(color: AppColors.textMuted)),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              appState.logout();
+              await appState.logout();
+              if (!context.mounted) return;
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -42,7 +43,7 @@ class ProfileScreen extends StatelessWidget {
 
   void _showEditProfileBottomSheet(BuildContext context, AppState appState, UserModel user) {
     final nameController = TextEditingController(text: user.name);
-    final phoneController = TextEditingController(text: user.phoneNumber ?? '081-234-5678');
+    final phoneController = TextEditingController(text: user.phoneNumber ?? '');
     final formKey = GlobalKey<FormState>();
 
     showModalBottomSheet(
@@ -209,19 +210,32 @@ class ProfileScreen extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           if (formKey.currentState!.validate()) {
-                            appState.updateUserProfile(
-                              name: nameController.text.trim(),
-                              phoneNumber: phoneController.text.trim(),
-                            );
-                            Navigator.pop(ctx);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('อัปเดตข้อมูลโปรไฟล์เรียบร้อยแล้ว'),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
+                            try {
+                              await appState.updateUserProfile(
+                                name: nameController.text.trim(),
+                                phoneNumber: phoneController.text.trim(),
+                              );
+                              if (ctx.mounted) Navigator.pop(ctx);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('อัปเดตข้อมูลโปรไฟล์เรียบร้อยแล้ว'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('อัปเดตโปรไฟล์ไม่สำเร็จ: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              }
+                            }
                           }
                         },
                         child: const Text('บันทึก'),
@@ -885,7 +899,7 @@ class ProfileScreen extends StatelessWidget {
           _buildSettingsMenuItem(
             icon: Icons.bar_chart_outlined,
             title: 'Reports & Export',
-            subtitle: 'สรุปและส่งออกรายงานเคส',
+            subtitle: 'สรุปและส่งออกรายงานเคสและออเดอร์ (PDF / CSV)',
             iconColor: AppColors.primary,
             onTap: () {
               Navigator.push(

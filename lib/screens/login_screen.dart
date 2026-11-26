@@ -75,9 +75,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       setState(() => isLoading = false);
 
-      // 4. Update AppState with Supabase profile
+      // 4. Update AppState with Supabase profile and load initial real data
       final appState = Provider.of<AppState>(context, listen: false);
-      appState.loginWithSupabaseProfile(profileRes);
+      await appState.loginWithSupabaseProfile(profileRes);
+      if (!mounted) return;
 
       Navigator.pushReplacement(
         context,

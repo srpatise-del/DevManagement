@@ -292,7 +292,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 8),
 
-              ...appState.myOrders.take(4).map(
+              ...appState.groupedMyOrders.take(4).map(
                 (item) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: item.cardType == OrderCardType.orderDiff
@@ -524,7 +524,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                       SizedBox(height: 2),
                       Text(
-                        'สรุปและส่งออกรายงานเคส',
+                        'สรุปและส่งออกรายงานเคสและออเดอร์ (PDF / CSV)',
                         style: TextStyle(
                           fontSize: 12,
                           color: AppColors.textSecondary,

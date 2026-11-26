@@ -181,9 +181,6 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
   }
 
   void _showAddFileDialog() {
-    final fileNameController = TextEditingController();
-    final fileSizeController = TextEditingController(text: '1.2 MB');
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -232,24 +229,42 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
 
                       final ext = f.extension ?? (f.name.contains('.') ? f.name.split('.').last : 'file');
                       final sizeStr = AttachmentConfig.formatFileSize(f.size);
+                      final appState = Provider.of<AppState>(context, listen: false);
 
-                      setState(() {
-                        _attachedFiles.add(AttachmentModel(
-                          id: 'att-${DateTime.now().millisecondsSinceEpoch}',
-                          name: f.name,
-                          size: sizeStr,
-                          dateText: 'วันนี้',
+                      if (f.bytes != null) {
+                        await appState.uploadOrderAttachment(
+                          orderId: widget.orderObj.id,
+                          fileBytes: f.bytes!,
+                          fileName: f.name,
+                          fileSize: sizeStr,
                           fileType: ext,
                           fileSizeBytes: f.size,
-                        ));
-                      });
+                        );
+                        final updated = appState.orders.firstWhere(
+                          (o) => o.id == widget.orderObj.id || o.supabaseId == widget.orderObj.supabaseId,
+                          orElse: () => widget.orderObj,
+                        );
+                        setState(() {
+                          _attachedFiles = List<AttachmentModel>.from(updated.attachments);
+                        });
+                      } else {
+                        throw Exception('ไม่สามารถอ่านข้อมูลไฟล์จากอุปกรณ์ได้');
+                      }
 
                       if (ctx.mounted) Navigator.pop(ctx);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('แนบไฟล์ ${f.name} สำเร็จแล้ว'), backgroundColor: Colors.green),
+                        );
+                      }
                     }
                   } catch (e) {
                     if (ctx.mounted) {
                       ScaffoldMessenger.of(ctx).showSnackBar(
-                        SnackBar(content: Text('เลือกไฟล์ไม่สำเร็จ: $e'), backgroundColor: Colors.red),
+                        SnackBar(
+                          content: Text('แนบไฟล์ไม่สำเร็จ: ${e.toString().replaceAll('Exception: ', '')}'),
+                          backgroundColor: Colors.red,
+                        ),
                       );
                     }
                   }
@@ -261,59 +276,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
-              const SizedBox(height: 16),
-              const Text('หรือเลือกไฟล์ตัวอย่างด่วน:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildPresetChip('slip_transfer.png', '1.2 MB', 'png', ctx),
-                  _buildPresetChip('order_report.xlsx', '3.1 MB', 'xlsx', ctx),
-                  _buildPresetChip('error_log.txt', '120 KB', 'txt', ctx),
-                  _buildPresetChip('tax_invoice.pdf', '850 KB', 'pdf', ctx),
-                ],
-              ),
-              const Divider(height: 24),
-              TextField(
-                controller: fileNameController,
-                decoration: const InputDecoration(hintText: 'ชื่อไฟล์ (เช่น document.pdf)'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: fileSizeController,
-                decoration: const InputDecoration(hintText: 'ขนาดไฟล์ (เช่น 1.5 MB)'),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    final name = fileNameController.text.trim();
-                    final size = fileSizeController.text.trim().isNotEmpty ? fileSizeController.text.trim() : '1.0 MB';
-                    if (name.isNotEmpty) {
-                      final ext = name.contains('.') ? name.split('.').last.toLowerCase() : 'xlsx';
-                      setState(() {
-                        _attachedFiles.add(AttachmentModel(
-                          id: 'att-${DateTime.now().millisecondsSinceEpoch}',
-                          name: name,
-                          size: size,
-                          dateText: 'วันนี้',
-                          fileType: ext,
-                        ));
-                      });
-                      Navigator.pop(ctx);
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text('เพิ่มไฟล์แนบ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-              ),
             ],
           ),
         );
@@ -321,30 +284,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
     );
   }
 
-  Widget _buildPresetChip(String name, String size, String type, BuildContext ctx) {
-    return ActionChip(
-      label: Text(name),
-      avatar: const Icon(Icons.attach_file, size: 14),
-      backgroundColor: const Color(0xFFF1F5F9),
-      onPressed: () {
-        setState(() {
-          _attachedFiles.add(AttachmentModel(
-            id: 'att-${DateTime.now().millisecondsSinceEpoch}',
-            name: name,
-            size: size,
-            dateText: 'วันนี้',
-            fileType: type,
-          ));
-        });
-        Navigator.pop(ctx);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('แนบไฟล์ $name แล้ว')),
-        );
-      },
-    );
-  }
-
-  void _submit() {
+  Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
       final appState = Provider.of<AppState>(context, listen: false);
       final selectedBank = kBankList.firstWhere((b) => b.code == _selectedBankCode, orElse: () => kBankList.first);
@@ -368,16 +308,27 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
         statusOrder: widget.orderObj.cardType == OrderCardType.bankIssue ? _statusOrder : null,
       );
 
-      appState.updateOrderCard(updatedOrder);
+      try {
+        await appState.updateOrderCard(updatedOrder);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('แก้ไขการ์ดออเดอร์ ${widget.orderObj.id} เรียบร้อยแล้ว'),
-          backgroundColor: Colors.green,
-        ),
-      );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('แก้ไขการ์ดออเดอร์ ${widget.orderObj.id} เรียบร้อยแล้ว'),
+            backgroundColor: Colors.green,
+          ),
+        );
 
-      Navigator.pop(context);
+        Navigator.pop(context);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('แก้ไขการ์ดออเดอร์ไม่สำเร็จ: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -598,7 +549,7 @@ class _EditOrderScreenState extends State<EditOrderScreen> {
               const Text('ผู้รับผิดชอบงาน (Assign)', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
               DropdownButtonFormField<UserModel?>(
-                value: _assignee,
+                value: appState.registeredUsers.contains(_assignee) ? _assignee : null,
                 items: [
                   const DropdownMenuItem(value: null, child: Text('ยังไม่ระบุผู้รับผิดชอบ')),
                   ...appState.registeredUsers.map((u) => DropdownMenuItem(value: u, child: Text('${u.name} (${u.role})'))),

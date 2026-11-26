@@ -1,16 +1,98 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../models/role_permission.dart';
+import '../services/notification_service.dart';
 import 'dashboard_screen.dart';
 import 'order_list_screen.dart';
 import 'case_list_screen.dart';
+import 'case_detail_screen.dart';
+import 'order_detail_screen.dart';
 import 'notification_screen.dart';
 import 'profile_screen.dart';
 
-class MainNavigationScreen extends StatelessWidget {
+class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
+
+  @override
+  State<MainNavigationScreen> createState() => _MainNavigationScreenState();
+}
+
+class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  @override
+  void initState() {
+    super.initState();
+    NotificationService.onNotificationOpened = _handlePushNavigation;
+    NotificationService.onForegroundMessage = _handleForegroundPush;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final initialMsg = NotificationService.consumeInitialMessage();
+      if (initialMsg != null) {
+        _handlePushNavigation(initialMsg);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    if (NotificationService.onNotificationOpened == _handlePushNavigation) {
+      NotificationService.onNotificationOpened = null;
+    }
+    if (NotificationService.onForegroundMessage == _handleForegroundPush) {
+      NotificationService.onForegroundMessage = null;
+    }
+    super.dispose();
+  }
+
+  void _handleForegroundPush(RemoteMessage message) {
+    if (!mounted) return;
+    final title = message.notification?.title ?? message.data['title']?.toString() ?? 'การแจ้งเตือนใหม่';
+    final body = message.notification?.body ?? message.data['body']?.toString() ?? '';
+    final hasTarget = (message.data['reference_id']?.toString() ?? '').isNotEmpty;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        content: Text(body.isNotEmpty ? '$title\n$body' : title),
+        action: hasTarget
+            ? SnackBarAction(
+                label: 'ดูเลย',
+                textColor: Colors.white,
+                onPressed: () => _handlePushNavigation(message),
+              )
+            : null,
+      ),
+    );
+  }
+
+  void _handlePushNavigation(RemoteMessage message) {
+    if (!mounted) return;
+    final appState = Provider.of<AppState>(context, listen: false);
+    final notifId = message.data['notification_id']?.toString() ?? '';
+    final module = (message.data['module']?.toString() ?? '').toLowerCase();
+    final refId = message.data['reference_id']?.toString() ?? '';
+
+    if (notifId.isNotEmpty) {
+      appState.markNotificationRead(notifId);
+    }
+
+    if (module == 'case' && refId.isNotEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => CaseDetailScreen(caseId: refId)),
+      );
+    } else if ((module == 'order_diff' || module == 'bank_issue') && refId.isNotEmpty) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => OrderDetailScreen(orderId: refId)),
+      );
+    } else {
+      appState.setNavIndex(3); // Notifications tab
+    }
+  }
 
   void _onTabTapped(BuildContext context, AppState appState, int index) {
     final role = appState.currentUser.roleEnum;

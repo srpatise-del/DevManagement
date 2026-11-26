@@ -40,7 +40,8 @@ class _OrderListScreenState extends State<OrderListScreen> {
     final role = appState.currentUser.roleEnum;
     final canCreateOrder = OrderRolePermissionHelper.hasPermission(role, OrderPermission.createOrder);
 
-    final ordersList = appState.filteredOrders;
+    final rawFilteredOrders = appState.filteredOrders;
+    final ordersList = appState.groupedFilteredOrders;
     final hasActiveFilters = appState.orderSearchQuery.isNotEmpty ||
         appState.filterOrderCardType != null ||
         appState.filterOrderDeliveryType != null ||
@@ -131,19 +132,19 @@ class _OrderListScreenState extends State<OrderListScreen> {
                   child: Row(
                     children: [
                       _buildFilterChip(
-                        label: 'ทั้งหมด (${appState.orders.length})',
+                        label: 'ทั้งหมด (${appState.groupedOrders.length})',
                         isSelected: appState.filterOrderCardType == null,
                         onTap: () => appState.setOrderFilters(clearCardType: true),
                       ),
                       const SizedBox(width: 8),
                       _buildFilterChip(
-                        label: 'Order Diff (${appState.orderDiffCount})',
+                        label: 'Order Diff (${appState.groupedOrderDiffCount})',
                         isSelected: appState.filterOrderCardType == OrderCardType.orderDiff,
                         onTap: () => appState.setOrderFilters(cardType: OrderCardType.orderDiff),
                       ),
                       const SizedBox(width: 8),
                       _buildFilterChip(
-                        label: 'Bank Issue (${appState.bankIssueCount})',
+                        label: 'Bank Issue (${appState.groupedBankIssueCount})',
                         isSelected: appState.filterOrderCardType == OrderCardType.bankIssue,
                         onTap: () => appState.setOrderFilters(cardType: OrderCardType.bankIssue),
                       ),
@@ -158,7 +159,7 @@ class _OrderListScreenState extends State<OrderListScreen> {
           // List vs Kanban view
           Expanded(
             child: _isKanbanView
-                ? OrderKanbanBoard(orders: ordersList)
+                ? OrderKanbanBoard(orders: rawFilteredOrders)
                 : ordersList.isEmpty
                     ? Center(
                         child: Column(

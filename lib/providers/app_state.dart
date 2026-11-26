@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,77 +7,39 @@ import '../models/role_permission.dart';
 import '../models/file_attachment_model.dart';
 import '../theme/app_theme.dart';
 import '../repositories/case_repository.dart';
+import '../repositories/order_repository.dart';
+import '../repositories/notification_repository.dart';
 import '../services/storage_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/attachment_picker_widget.dart';
 
 enum AppDataMode {
   initializing,
-  demo,
   real,
 }
 
 class AppState extends ChangeNotifier {
   final CaseRepository caseRepository = CaseRepository();
+  final OrderRepository orderRepository = OrderRepository();
+  final NotificationRepository notificationRepository = NotificationRepository();
+  RealtimeChannel? _notificationsChannel;
   AppDataMode dataMode = AppDataMode.initializing;
-  // Pre-configured registered users list
-  final List<UserModel> registeredUsers = [
-    const UserModel(
-      id: 'EMP-001',
-      name: 'Patis',
-      role: 'Developer',
-      email: 'patis@company.com',
-      password: '123456',
-      avatarUrl: 'P',
-      team: TeamType.web,
-      phoneNumber: '081-234-5678',
-      position: 'Senior Frontend Developer',
-    ),
-    const UserModel(
-      id: 'EMP-002',
-      name: 'Mook',
-      role: 'User',
-      email: 'mook@company.com',
-      password: '123456',
-      avatarUrl: 'M',
-      team: TeamType.web,
-      phoneNumber: '089-876-5432',
-      position: 'Product Specialist',
-    ),
-    const UserModel(
-      id: 'EMP-003',
-      name: 'John',
-      role: 'Team Lead',
-      email: 'john@company.com',
-      password: '123456',
-      avatarUrl: 'J',
-      team: TeamType.web,
-      phoneNumber: '082-111-2222',
-      position: 'Web Development Lead',
-    ),
-    const UserModel(
-      id: 'EMP-004',
-      name: 'Admin',
-      role: 'Admin',
-      email: 'admin@company.com',
-      password: '123456',
-      avatarUrl: 'A',
-      team: TeamType.infra,
-      phoneNumber: '080-999-8888',
-      position: 'System Administrator',
-    ),
-  ];
+  // Active users directory (populated from Supabase public.profiles)
+  List<UserModel> registeredUsers = [];
 
-  // Active logged-in user
-  late UserModel currentUser;
-
-  // Convenient shortcuts
-  UserModel get mookUser => registeredUsers.firstWhere((u) => u.name == 'Mook', orElse: () => registeredUsers[1]);
-  UserModel get johnUser => registeredUsers.firstWhere((u) => u.name == 'John', orElse: () => registeredUsers[2]);
+  // Active logged-in user (initialized to empty placeholder until Supabase login)
+  UserModel currentUser = const UserModel(
+    id: '',
+    name: '',
+    role: 'user',
+    email: '',
+    avatarUrl: 'U',
+  );
 
   // Authentication state
   bool isLoggedIn = false;
 
-  // Selected bottom nav index (0: Dashboard, 1: Case List, 2: Notifications, 3: Profile)
+  // Selected bottom nav index (0: Dashboard, 1: Order List, 2: Case List, 3: Notifications, 4: Profile)
   int selectedNavIndex = 0;
 
   // Filter criteria for search & filter
@@ -96,9 +59,77 @@ class AppState extends ChangeNotifier {
   // Notifications
   List<AppNotificationModel> notifications = [];
 
-  AppState() {
-    currentUser = registeredUsers.first; // Default to Patis
-    _initData();
+  AppState();
+
+  UserModel _mapProfileRowToUserModel(Map<String, dynamic> profile) {
+    final authId = profile['id']?.toString();
+    final fullName = (profile['full_name'] as String?)?.trim();
+    final displayName = (fullName != null && fullName.isNotEmpty)
+        ? fullName
+        : (profile['email'] as String? ?? 'User');
+    final email = profile['email'] as String? ?? '';
+    final role = profile['role'] as String? ?? 'user';
+    final rawEmpCode = (profile['employee_code'] as String?)?.trim();
+    final employeeCode = (rawEmpCode != null && rawEmpCode.isNotEmpty)
+        ? rawEmpCode
+        : (authId != null && authId.length >= 6
+            ? 'EMP-${authId.substring(0, 6).toUpperCase()}'
+            : 'EMP-000');
+    final teamStatus = profile['team_status'] as String? ?? 'pending';
+    final requestedTeamId = profile['requested_team_id'] as String?;
+    final isActive = profile['is_active'] as bool? ?? true;
+    final phoneNumber = (profile['phone_number'] as String?)?.trim();
+
+    TeamType? teamEnum;
+    final teamData = profile['teams'];
+    if (teamData != null && teamData is Map<String, dynamic>) {
+      final code = (teamData['code'] as String? ?? '').toLowerCase();
+      teamEnum = TeamType.values.firstWhere(
+        (t) => t.name.toLowerCase() == code,
+        orElse: () => TeamType.other,
+      );
+    }
+
+    final avatarLetter = displayName.isNotEmpty ? displayName.substring(0, 1).toUpperCase() : 'U';
+
+    return UserModel(
+      id: employeeCode,
+      authUserId: authId,
+      name: displayName,
+      role: role,
+      email: email,
+      password: '',
+      avatarUrl: avatarLetter,
+      team: teamEnum,
+      phoneNumber: (phoneNumber != null && phoneNumber.isNotEmpty) ? phoneNumber : null,
+      position: role.toUpperCase(),
+      teamStatus: teamStatus,
+      requestedTeamId: requestedTeamId,
+      isActive: isActive,
+    );
+  }
+
+  Future<void> loadUsersFromSupabase() async {
+    if (dataMode != AppDataMode.real) return;
+    try {
+      final res = await Supabase.instance.client
+          .from('profiles')
+          .select('id, employee_code, full_name, email, role, team_id, phone_number, is_active, team_status, requested_team_id, teams!profiles_team_id_fkey(id, name, code)')
+          .eq('is_active', true)
+          .order('full_name', ascending: true);
+
+      final loaded = (res as List<dynamic>)
+          .whereType<Map<String, dynamic>>()
+          .map(_mapProfileRowToUserModel)
+          .toList();
+
+      if (loaded.isNotEmpty) {
+        registeredUsers = loaded;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('[AppState.loadUsersFromSupabase] Error: $e');
+    }
   }
 
   Future<void> loadCasesFromSupabase() async {
@@ -107,6 +138,78 @@ class AppState extends ChangeNotifier {
       cases = await caseRepository.loadCases();
       notifyListeners();
     } catch (_) {}
+  }
+
+  Future<void> loadOrdersFromSupabase() async {
+    if (dataMode != AppDataMode.real) return;
+    try {
+      orders = await orderRepository.loadOrders();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[AppState.loadOrdersFromSupabase] Error: $e');
+    }
+  }
+
+  Future<void> loadNotificationsFromSupabase() async {
+    if (dataMode != AppDataMode.real) return;
+    try {
+      notifications = await notificationRepository.loadNotifications();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[AppState.loadNotificationsFromSupabase] Error: $e');
+    }
+  }
+
+  void _startNotificationsRealtime() {
+    final userId = currentUser.authUserId ?? Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null || userId.isEmpty) return;
+
+    notificationRepository.unsubscribe(_notificationsChannel);
+    _notificationsChannel = notificationRepository.subscribeToNotifications(
+      userId: userId,
+      onInsert: (newNotif) {
+        if (!notifications.any((n) => n.id == newNotif.id)) {
+          notifications.insert(0, newNotif);
+          notifyListeners();
+        }
+      },
+    );
+  }
+
+  Future<void> _stopNotificationsRealtime() async {
+    await notificationRepository.unsubscribe(_notificationsChannel);
+    _notificationsChannel = null;
+  }
+
+  Future<void> syncDeviceTokenToSupabase() async {
+    if (dataMode != AppDataMode.real) return;
+
+    NotificationService.onTokenRefreshed = (newToken) {
+      if (dataMode == AppDataMode.real) {
+        notificationRepository.registerDeviceToken(
+          fcmToken: newToken,
+          platform: NotificationService.currentPlatformName,
+        );
+      }
+    };
+
+    final token = await NotificationService.getToken();
+    if (token != null && token.isNotEmpty) {
+      await notificationRepository.registerDeviceToken(
+        fcmToken: token,
+        platform: NotificationService.currentPlatformName,
+      );
+    }
+  }
+
+  String? _findSupabaseOrderId(String orderId) {
+    final idx = _findOrderIndex(orderId);
+    if (idx != -1 && orders[idx].supabaseId != null && orders[idx].supabaseId!.isNotEmpty) {
+      return orders[idx].supabaseId;
+    }
+    final uuidRegex = RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+    if (uuidRegex.hasMatch(orderId)) return orderId;
+    return null;
   }
 
   Future<String?> _getTeamUuid(TeamType team) async {
@@ -172,109 +275,25 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> loginWithSupabaseProfile(Map<String, dynamic> profile) async {
-    final fullName = profile['full_name'] as String? ?? 'User';
-    final email = profile['email'] as String? ?? '';
-    final role = profile['role'] as String? ?? 'user';
-    final employeeCode = profile['employee_code'] as String? ?? 'EMP-001';
-    final teamStatus = profile['team_status'] as String? ?? 'pending';
-    final requestedTeamId = profile['requested_team_id'] as String?;
-    final isActive = profile['is_active'] as bool? ?? true;
-    
-    TeamType? teamEnum;
-    final teamData = profile['teams'];
-    if (teamData != null && teamData is Map<String, dynamic>) {
-      final code = (teamData['code'] as String? ?? '').toLowerCase();
-      teamEnum = TeamType.values.firstWhere(
-        (t) => t.name.toLowerCase() == code,
-        orElse: () => TeamType.web,
-      );
-    }
-
-    final avatarLetter = fullName.isNotEmpty ? fullName.substring(0, 1).toUpperCase() : 'U';
-
-    currentUser = UserModel(
-      id: employeeCode,
-      authUserId: profile['id']?.toString(),
-      name: fullName,
-      role: role,
-      email: email,
-      password: '',
-      avatarUrl: avatarLetter,
-      team: teamEnum,
-      phoneNumber: profile['phone_number'] ?? '081-000-0000',
-      position: role.toUpperCase(),
-      teamStatus: teamStatus,
-      requestedTeamId: requestedTeamId,
-      isActive: isActive,
-    );
+    currentUser = _mapProfileRowToUserModel(profile);
 
     dataMode = AppDataMode.real;
     isLoggedIn = true;
     selectedNavIndex = 0;
+    registeredUsers = [currentUser];
     cases = [];
     orders = [];
+    notifications = [];
     notifyListeners();
-    await loadCasesFromSupabase();
-  }
-
-  // Authenticators
-  bool loginWithCredentials(String email, String password) {
-    final matchIndex = registeredUsers.indexWhere(
-      (u) => u.email.trim().toLowerCase() == email.trim().toLowerCase() && u.password == password.trim(),
-    );
-
-    if (matchIndex != -1) {
-      currentUser = registeredUsers[matchIndex];
-      isLoggedIn = true;
-      selectedNavIndex = 0; // Reset tab to Dashboard
-      notifyListeners();
-      return true;
-    }
-    return false;
-  }
-
-  bool registerUser({
-    required String name,
-    required String role,
-    required String email,
-    required String password,
-    TeamType? team,
-  }) {
-    // Check if email already exists
-    final exists = registeredUsers.any(
-      (u) => u.email.trim().toLowerCase() == email.trim().toLowerCase(),
-    );
-
-    if (exists) return false;
-
-    final avatarLetter = name.trim().isNotEmpty ? name.trim().substring(0, 1).toUpperCase() : 'U';
-    final newUser = UserModel(
-      id: 'EMP-00${registeredUsers.length + 1}',
-      name: name.trim(),
-      role: role.trim(),
-      email: email.trim().toLowerCase(),
-      password: password.trim(),
-      avatarUrl: avatarLetter,
-      team: team ?? TeamType.web,
-      phoneNumber: '081-000-0000',
-      position: role.trim(),
-    );
-
-    registeredUsers.add(newUser);
-    currentUser = newUser;
-    isLoggedIn = true;
-    selectedNavIndex = 0; // Reset tab to Dashboard
-    notifyListeners();
-    return true;
-  }
-
-  void quickDemoLogin(UserModel user) {
-    dataMode = AppDataMode.demo;
-    currentUser = user;
-    isLoggedIn = true;
-    selectedNavIndex = 0; // Reset tab to Dashboard
-    _initData();
-    notifyListeners();
+    await Future.wait([
+      loadUsersFromSupabase(),
+      loadCasesFromSupabase(),
+      loadOrdersFromSupabase(),
+      loadNotificationsFromSupabase(),
+    ]);
+    _startNotificationsRealtime();
+    // Register FCM token in background without blocking navigation
+    syncDeviceTokenToSupabase();
   }
 
   Future<bool> requestTeam(String teamId) async {
@@ -354,964 +373,20 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void _initData() {
-    // Standard Comments & Activity Logs for DEV-001
-    final dev001Logs = [
-      const ActivityLogModel(
-        id: 'act-101',
-        caseId: 'DEV-001',
-        title: 'สร้างเคส',
-        authorName: 'Patis',
-        dateText: '13 ก.ย. 2566 09:15',
-        icon: Icons.add_circle,
-        iconColor: Colors.blue,
-        iconBgColor: Color(0xFFDBEAFE),
-      ),
-      const ActivityLogModel(
-        id: 'act-102',
-        caseId: 'DEV-001',
-        title: 'มอบหมายให้ Patis',
-        authorName: 'John',
-        dateText: '13 ก.ย. 2566 09:30',
-        icon: Icons.person_add,
-        iconColor: Colors.indigo,
-        iconBgColor: Color(0xFFE0E7FF),
-      ),
-      const ActivityLogModel(
-        id: 'act-103',
-        caseId: 'DEV-001',
-        title: 'เปลี่ยนสถานะ: Open → In Progress',
-        authorName: 'Patis',
-        dateText: '13 ก.ย. 2566 10:00',
-        icon: Icons.sync,
-        iconColor: Colors.teal,
-        iconBgColor: Color(0xFFCCFBF1),
-      ),
-      const ActivityLogModel(
-        id: 'act-104',
-        caseId: 'DEV-001',
-        title: 'เพิ่มความคิดเห็น',
-        authorName: 'Mook',
-        dateText: '13 ก.ย. 2566 11:30',
-        icon: Icons.chat_bubble,
-        iconColor: Colors.blueAccent,
-        iconBgColor: Color(0xFFE0F2FE),
-      ),
-    ];
-
-    final dev001Comments = [
-      CommentModel(
-        id: 'c-101',
-        caseId: 'DEV-001',
-        author: mookUser,
-        content: 'ผู้ใช้งานหลายรายแจ้งเข้ามาว่า เมื่อกดปุ่ม Login บนหน้าเว็บแล้วระบบเด้ง HTTP 500 Internal Server Error ครับ',
-        dateText: '13 ก.ย. 2566 09:20',
-        likes: 3,
-        isLiked: true,
-      ),
-      CommentModel(
-        id: 'c-102',
-        caseId: 'DEV-001',
-        author: registeredUsers.first, // Patis
-        content: 'กำลังตรวจสอบการทำงานของ Auth Service ในคัสเตอร์ และจะอัปเดตการแก้ไขปัญหา CORS / Token ให้ทราบครับ',
-        dateText: '13 ก.ย. 2566 10:05',
-        likes: 1,
-        isLiked: false,
-      ),
-      CommentModel(
-        id: 'c-103',
-        caseId: 'DEV-001',
-        author: johnUser,
-        content: 'เร่งดำเนินการแก้ไขหน่อยนะครับ มีผู้ใช้งานเข้ามารายงานปัญหานี้เพิ่มขึ้นครับ',
-        dateText: '13 ก.ย. 2566 11:45',
-        likes: 2,
-        isLiked: false,
-      ),
-    ];
-
-    // Standard Comments & Activity Logs for DEV-002
-    final dev002Logs = [
-      const ActivityLogModel(
-        id: 'act-201',
-        caseId: 'DEV-002',
-        title: 'สร้างเคส',
-        authorName: 'Mook',
-        dateText: '14 ก.ย. 2566 08:30',
-        icon: Icons.add_circle,
-        iconColor: Colors.blue,
-        iconBgColor: Color(0xFFDBEAFE),
-      ),
-      const ActivityLogModel(
-        id: 'act-202',
-        caseId: 'DEV-002',
-        title: 'มอบหมายให้ John',
-        authorName: 'Mook',
-        dateText: '14 ก.ย. 2566 08:45',
-        icon: Icons.person_add,
-        iconColor: Colors.indigo,
-        iconBgColor: Color(0xFFE0E7FF),
-      ),
-      const ActivityLogModel(
-        id: 'act-203',
-        caseId: 'DEV-002',
-        title: 'เพิ่มความคิดเห็น',
-        authorName: 'John',
-        dateText: '14 ก.ย. 2566 10:20',
-        icon: Icons.chat_bubble,
-        iconColor: Colors.blueAccent,
-        iconBgColor: Color(0xFFE0F2FE),
-      ),
-      const ActivityLogModel(
-        id: 'act-204',
-        caseId: 'DEV-002',
-        title: 'แนบไฟล์ api_trace.log',
-        authorName: 'Admin',
-        dateText: '14 ก.ย. 2566 14:00',
-        icon: Icons.attach_file,
-        iconColor: Colors.green,
-        iconBgColor: Color(0xFFDCFCE7),
-      ),
-    ];
-
-    final dev002Comments = [
-      CommentModel(
-        id: 'c-201',
-        caseId: 'DEV-002',
-        author: mookUser,
-        content: 'ระบบ API Gateway มีการรีสปอนส์ตอบกลับล่าช้า และส่งกลับ Connection Refused เป็นระยะบนสภาพแวดล้อม Staging ครับ',
-        dateText: '14 ก.ย. 2566 08:35',
-        likes: 1,
-        isLiked: false,
-      ),
-      CommentModel(
-        id: 'c-202',
-        caseId: 'DEV-002',
-        author: johnUser,
-        content: 'ตรวจสอบพบว่า Connection Pool ใน Database เต็ม ได้ทำการขยายขนาด Max Connections และกำลังมอนิเตอร์ต่อครับ',
-        dateText: '14 ก.ย. 2566 10:20',
-        likes: 4,
-        isLiked: true,
-      ),
-      CommentModel(
-        id: 'c-203',
-        caseId: 'DEV-002',
-        author: registeredUsers[3], // Admin
-        content: 'ทำการเพิ่มทรัพยากร RAM/CPU บน Pod เซิร์ฟเวอร์เรียบร้อยแล้วครับ',
-        dateText: '14 ก.ย. 2566 14:15',
-        likes: 2,
-        isLiked: false,
-      ),
-    ];
-
-    // Standard Activity Logs for DEV-003
-    final dev003Logs = [
-      const ActivityLogModel(
-        id: 'act-1',
-        caseId: 'DEV-003',
-        title: 'สร้างเคส',
-        authorName: 'Mook',
-        dateText: '15 ก.ย. 2566 10:32',
-        icon: Icons.add_circle,
-        iconColor: Colors.blue,
-        iconBgColor: Color(0xFFDBEAFE),
-      ),
-      const ActivityLogModel(
-        id: 'act-2',
-        caseId: 'DEV-003',
-        title: 'มอบหมายให้ Patis',
-        authorName: 'Mook',
-        dateText: '15 ก.ย. 2566 09:45',
-        icon: Icons.person_add,
-        iconColor: Colors.indigo,
-        iconBgColor: Color(0xFFE0E7FF),
-      ),
-      const ActivityLogModel(
-        id: 'act-3',
-        caseId: 'DEV-003',
-        title: 'เปลี่ยนสถานะ: Open → In Progress',
-        authorName: 'Patis',
-        dateText: '15 ก.ย. 2566 11:20',
-        icon: Icons.sync,
-        iconColor: Colors.teal,
-        iconBgColor: Color(0xFFCCFBF1),
-      ),
-      const ActivityLogModel(
-        id: 'act-4',
-        caseId: 'DEV-003',
-        title: 'เพิ่มความคิดเห็น',
-        authorName: 'Mook',
-        dateText: '15 ก.ย. 2566 14:10',
-        icon: Icons.chat_bubble,
-        iconColor: Colors.blueAccent,
-        iconBgColor: Color(0xFFE0F2FE),
-      ),
-      const ActivityLogModel(
-        id: 'act-5',
-        caseId: 'DEV-003',
-        title: 'แนบไฟล์ error_screenshot.png',
-        authorName: 'Patis',
-        dateText: '15 ก.ย. 2566 16:20',
-        icon: Icons.attach_file,
-        iconColor: Colors.green,
-        iconBgColor: Color(0xFFDCFCE7),
-      ),
-    ];
-
-    // Standard Comments for DEV-003
-    final dev003Comments = [
-      CommentModel(
-        id: 'c-1',
-        caseId: 'DEV-003',
-        author: mookUser,
-        content: 'พบปัญหาหลังจากอัปเดตเวอร์ชันล่าสุดครับ แนบรูปภาพให้ด้วยครับ',
-        dateText: '15 ก.ย. 2566 10:32',
-        attachedImageUrl: 'img1',
-        likes: 2,
-        isLiked: true,
-      ),
-      CommentModel(
-        id: 'c-2',
-        caseId: 'DEV-003',
-        author: registeredUsers.first,
-        content: 'กำลังตรวจสอบปัญหา และจะอัปเดตให้ทราบครับ',
-        dateText: '15 ก.ย. 2566 11:05',
-        likes: 0,
-        isLiked: false,
-      ),
-      CommentModel(
-        id: 'c-3',
-        caseId: 'DEV-003',
-        author: johnUser,
-        content: 'ตรวจสอบแล้ว พบว่าเกิดจาก API timeout กำลังแก้ไขอยู่นะครับ',
-        dateText: '15 ก.ย. 2566 13:20',
-        likes: 1,
-        isLiked: false,
-      ),
-    ];
-
-    // Standard Comments & Activity Logs for DEV-004
-    final dev004Logs = [
-      const ActivityLogModel(
-        id: 'act-401',
-        caseId: 'DEV-004',
-        title: 'สร้างเคส',
-        authorName: 'John',
-        dateText: '12 ก.ย. 2566 11:10',
-        icon: Icons.add_circle,
-        iconColor: Colors.blue,
-        iconBgColor: Color(0xFFDBEAFE),
-      ),
-      const ActivityLogModel(
-        id: 'act-402',
-        caseId: 'DEV-004',
-        title: 'มอบหมายให้ Admin',
-        authorName: 'John',
-        dateText: '12 ก.ย. 2566 11:25',
-        icon: Icons.person_add,
-        iconColor: Colors.indigo,
-        iconBgColor: Color(0xFFE0E7FF),
-      ),
-      const ActivityLogModel(
-        id: 'act-403',
-        caseId: 'DEV-004',
-        title: 'เปลี่ยนสถานะ: Open → Pending',
-        authorName: 'Admin',
-        dateText: '12 ก.ย. 2566 13:00',
-        icon: Icons.sync,
-        iconColor: Colors.teal,
-        iconBgColor: Color(0xFFCCFBF1),
-      ),
-      const ActivityLogModel(
-        id: 'act-404',
-        caseId: 'DEV-004',
-        title: 'เพิ่มความคิดเห็น',
-        authorName: 'Admin',
-        dateText: '12 ก.ย. 2566 15:40',
-        icon: Icons.chat_bubble,
-        iconColor: Colors.blueAccent,
-        iconBgColor: Color(0xFFE0F2FE),
-      ),
-    ];
-
-    final dev004Comments = [
-      CommentModel(
-        id: 'c-401',
-        caseId: 'DEV-004',
-        author: johnUser,
-        content: 'ลูกค้าชำระเงินผ่านช่องทาง Payment Gateway แล้วระบบหมุนค้างประมาณ 30 วินาที จนเด้งหน้า Timeout ครับ',
-        dateText: '12 ก.ย. 2566 11:15',
-        likes: 2,
-        isLiked: true,
-      ),
-      CommentModel(
-        id: 'c-402',
-        caseId: 'DEV-004',
-        author: registeredUsers[3], // Admin
-        content: 'กำลังประสานงานกับทีม Payment Gateway ฝั่งธนาคารเพื่อตรวจสอบความเสถียรของ Webhook Callback อยู่ครับ',
-        dateText: '12 ก.ย. 2566 13:05',
-        likes: 3,
-        isLiked: false,
-      ),
-    ];
-
-    // Standard Comments & Activity Logs for DEV-005
-    final dev005Logs = [
-      const ActivityLogModel(
-        id: 'act-501',
-        caseId: 'DEV-005',
-        title: 'สร้างเคส',
-        authorName: 'Mook',
-        dateText: '11 ก.ย. 2566 14:20',
-        icon: Icons.add_circle,
-        iconColor: Colors.blue,
-        iconBgColor: Color(0xFFDBEAFE),
-      ),
-      const ActivityLogModel(
-        id: 'act-502',
-        caseId: 'DEV-005',
-        title: 'มอบหมายให้ Patis',
-        authorName: 'Mook',
-        dateText: '11 ก.ย. 2566 14:35',
-        icon: Icons.person_add,
-        iconColor: Colors.indigo,
-        iconBgColor: Color(0xFFE0E7FF),
-      ),
-      const ActivityLogModel(
-        id: 'act-503',
-        caseId: 'DEV-005',
-        title: 'เพิ่มความคิดเห็น',
-        authorName: 'Patis',
-        dateText: '11 ก.ย. 2566 17:15',
-        icon: Icons.chat_bubble,
-        iconColor: Colors.blueAccent,
-        iconBgColor: Color(0xFFE0F2FE),
-      ),
-    ];
-
-    final dev005Comments = [
-      CommentModel(
-        id: 'c-501',
-        caseId: 'DEV-005',
-        author: mookUser,
-        content: 'พบตัวอักษรตกขอบล้นหน้าจอ (RenderFlex Overflow) บนหน้าจอมือถือขนาดเล็ก เช่น iPhone SE และ Android จอเล็กครับ',
-        dateText: '11 ก.ย. 2566 14:25',
-        likes: 1,
-        isLiked: false,
-      ),
-      CommentModel(
-        id: 'c-502',
-        caseId: 'DEV-005',
-        author: registeredUsers.first, // Patis
-        content: 'รับทราบครับ กำลังปรับโครงสร้าง Layout ให้ใช้ SingleChildScrollView และ FlexBox แบบ Responsive ครับ',
-        dateText: '11 ก.ย. 2566 17:15',
-        likes: 2,
-        isLiked: true,
-      ),
-    ];
-
-    // Standard Comments & Activity Logs for DEV-006 (Unassigned Case)
-    final dev006Logs = [
-      const ActivityLogModel(
-        id: 'act-601',
-        caseId: 'DEV-006',
-        title: 'สร้างเคส',
-        authorName: 'Mook',
-        dateText: '10 ก.ย. 2566 16:10',
-        icon: Icons.add_circle,
-        iconColor: Colors.blue,
-        iconBgColor: Color(0xFFDBEAFE),
-      ),
-      const ActivityLogModel(
-        id: 'act-602',
-        caseId: 'DEV-006',
-        title: 'รอการมอบหมายผู้รับผิดชอบ',
-        authorName: 'System',
-        dateText: '10 ก.ย. 2566 16:10',
-        icon: Icons.person_outline,
-        iconColor: Colors.orange,
-        iconBgColor: Color(0xFFFEF3C7),
-      ),
-    ];
-
-    final dev006Comments = [
-      CommentModel(
-        id: 'c-601',
-        caseId: 'DEV-006',
-        author: mookUser,
-        content: 'ระบบส่งอีเมลยืนยันการทำรายการหยุดทำงานกะทันหัน ผู้ใช้ไม่ได้รับ OTP ทางอีเมลครับ รบกวน Team Lead / Admin มอบหมายผู้รับผิดชอบด่วนครับ',
-        dateText: '10 ก.ย. 2566 16:12',
-        likes: 1,
-        isLiked: false,
-      ),
-    ];
-
-    cases = [
-      CaseModel(
-        id: 'DEV-003',
-        title: 'หน้า Dashboard แสดงผลผิด',
-        priority: CasePriority.low,
-        status: CaseStatus.inProgress,
-        team: TeamType.web,
-        category: 'UI/UX',
-        assignee: registeredUsers.first,
-        dateText: '15 ก.ย. 2566',
-        systemAffected: 'Web Application',
-        environment: 'Production',
-        url: 'https://app.company.com/dashboard',
-        browser: 'Chrome (Version 128)',
-        createdById: 'EMP-002',
-        attachedImages: ['img1', 'img2', 'img3'],
-        attachedFiles: const [
-          CaseFileAttachment(fileName: 'error_screenshot.png', fileSize: '2.4 MB'),
-          CaseFileAttachment(fileName: 'log.txt', fileSize: '120 KB'),
-        ],
-        comments: dev003Comments,
-        activityLogs: dev003Logs,
-      ),
-      CaseModel(
-        id: 'DEV-002',
-        title: 'API Connection Error',
-        priority: CasePriority.medium,
-        status: CaseStatus.open,
-        team: TeamType.backend,
-        category: 'Technical',
-        assignee: johnUser,
-        dateText: '14 ก.ย. 2566',
-        systemAffected: 'API Gateway',
-        environment: 'Staging',
-        url: 'https://api.company.com/v1',
-        browser: 'N/A',
-        createdById: 'EMP-002',
-        comments: dev002Comments,
-        activityLogs: dev002Logs,
-      ),
-      CaseModel(
-        id: 'DEV-001',
-        title: 'Login ไม่สามารถใช้งานได้',
-        priority: CasePriority.high,
-        status: CaseStatus.inProgress,
-        team: TeamType.web,
-        category: 'Bug',
-        assignee: registeredUsers.first,
-        dateText: '13 ก.ย. 2566',
-        systemAffected: 'Auth System',
-        environment: 'Production',
-        url: 'https://app.company.com/login',
-        browser: 'Chrome / Safari',
-        createdById: 'EMP-001',
-        comments: dev001Comments,
-        activityLogs: dev001Logs,
-      ),
-      CaseModel(
-        id: 'DEV-004',
-        title: 'ระบบชำระเงินไทม์เอาต์',
-        priority: CasePriority.medium,
-        status: CaseStatus.pending,
-        team: TeamType.infra,
-        category: 'Performance',
-        assignee: registeredUsers.last,
-        dateText: '12 ก.ย. 2566',
-        systemAffected: 'Payment Gateway',
-        environment: 'Production',
-        url: 'https://pay.company.com',
-        browser: 'All Browsers',
-        createdById: 'EMP-003',
-        comments: dev004Comments,
-        activityLogs: dev004Logs,
-      ),
-      CaseModel(
-        id: 'DEV-005',
-        title: 'หน้า Mobile แสดงผลผิด',
-        priority: CasePriority.low,
-        status: CaseStatus.open,
-        team: TeamType.mobile,
-        category: 'UI/UX',
-        assignee: registeredUsers.first,
-        dateText: '11 ก.ย. 2566',
-        systemAffected: 'Mobile Application',
-        createdById: 'EMP-002',
-        environment: 'Production App',
-        url: 'App v1.2.4 (Build 108) (iOS)',
-        browser: 'iPhone 15 Pro (iOS 17.5)',
-        comments: dev005Comments,
-        activityLogs: dev005Logs,
-      ),
-      CaseModel(
-        id: 'DEV-006',
-        title: 'ระบบแจ้งเตือนอีเมลส่งไม่ออก',
-        priority: CasePriority.critical,
-        status: CaseStatus.open,
-        team: TeamType.infra,
-        category: 'Email Service',
-        assignee: null,
-        dateText: '10 ก.ย. 2566',
-        systemAffected: 'SMTP Gateway / Notification Service',
-        environment: 'Production',
-        url: 'N/A',
-        browser: 'N/A',
-        createdById: 'EMP-002',
-        comments: dev006Comments,
-        activityLogs: dev006Logs,
-      ),
-      CaseModel(
-        id: 'DEV-007',
-        title: 'API Gateway Timeout ในช่วง Peak Hours',
-        priority: CasePriority.critical,
-        status: CaseStatus.inProgress,
-        team: TeamType.backend,
-        category: 'API Gateway',
-        assignee: registeredUsers.first,
-        dateText: '9 ก.ย. 2566',
-        systemAffected: 'API Gateway / Microservices',
-        environment: 'Production',
-        url: 'https://api.company.com',
-        browser: 'N/A',
-        createdById: 'EMP-001',
-      ),
-      CaseModel(
-        id: 'DEV-008',
-        title: 'ไม่สามารถอัปโหลดรูปภาพโปรไฟล์ขนาดใหญ่ได้',
-        priority: CasePriority.medium,
-        status: CaseStatus.open,
-        team: TeamType.web,
-        category: 'Storage Service',
-        assignee: registeredUsers[1],
-        dateText: '8 ก.ย. 2566',
-        systemAffected: 'User Profile / S3 Storage',
-        environment: 'Production',
-        url: 'https://app.company.com/profile',
-        browser: 'Chrome (Version 128)',
-        createdById: 'EMP-002',
-      ),
-      CaseModel(
-        id: 'DEV-009',
-        title: 'Push Notification แจ้งเตือนดีเลย์บน Android',
-        priority: CasePriority.high,
-        status: CaseStatus.assigned,
-        team: TeamType.mobile,
-        category: 'Notification',
-        assignee: registeredUsers[2],
-        dateText: '7 ก.ย. 2566',
-        systemAffected: 'FCM / Mobile App',
-        environment: 'Production App',
-        url: 'App v1.2.5 (Android)',
-        browser: 'Samsung Galaxy S24',
-        createdById: 'EMP-003',
-      ),
-      CaseModel(
-        id: 'DEV-010',
-        title: 'ฐานข้อมูล CPU Spike เกิน 90%',
-        priority: CasePriority.critical,
-        status: CaseStatus.pending,
-        team: TeamType.infra,
-        category: 'Database',
-        assignee: registeredUsers.last,
-        dateText: '6 ก.ย. 2566',
-        systemAffected: 'PostgreSQL Cluster',
-        environment: 'Production',
-        url: 'internal.db.company.com',
-        browser: 'N/A',
-        createdById: 'EMP-004',
-      ),
-      CaseModel(
-        id: 'DEV-011',
-        title: 'หน้าแดชบอร์ดโหลดข้อมูลช้าในหน้ารายงานยอดขาย',
-        priority: CasePriority.low,
-        status: CaseStatus.done,
-        team: TeamType.web,
-        category: 'Reporting',
-        assignee: registeredUsers.first,
-        dateText: '5 ก.ย. 2566',
-        systemAffected: 'Sales Analytics Service',
-        environment: 'Production',
-        url: 'https://app.company.com/reports',
-        browser: 'Firefox / Chrome',
-        createdById: 'EMP-001',
-      ),
-    ];
-
-    // Orders Initial Mock Data (Order Diff & Bank Issue Cards)
-    orders = [
-      OrderModel(
-        id: '849201',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.express,
-        priority: CasePriority.high,
-        assignee: registeredUsers.first,
-        createBy: 'Narin S.',
-        dateText: '12 ต.ค. 2569',
-        attachments: const [
-          AttachmentModel(
-            id: 'att-1',
-            name: 'order_diff_20251012.xlsx',
-            size: '2.4 MB',
-            dateText: '12 ต.ค. 2569',
-            fileType: 'xlsx',
-          ),
-        ],
-        errorDetails: 'Product not found\nไม่พบสินค้าตามรหัสที่ระบุ',
-        comments: [
-          CommentModel(
-            id: 'c-1',
-            caseId: '849201',
-            author: const UserModel(id: 'EMP-050', name: 'Jakkapat T.', role: 'Team Backend', email: 'jakkapat@company.com', password: '', avatarUrl: 'JT'),
-            content: 'ตรวจสอบแล้ว เป็นปัญหายังจากรหัสสินค้า ไม่ได้อยู่ในระบบ',
-            dateText: '12 ต.ค. 2569 15:20',
-          ),
-          CommentModel(
-            id: 'c-2',
-            caseId: '849201',
-            author: const UserModel(id: 'EMP-051', name: 'Narin S.', role: 'Team Lead', email: 'narin@company.com', password: '', avatarUrl: 'NS'),
-            content: 'รับทราบครับ ให้ทีมแก้ไขและอัปเดตสถานะเมื่อเสร็จสิ้น',
-            dateText: '12 ต.ค. 2569 16:05',
-          ),
-          CommentModel(
-            id: 'c-3',
-            caseId: '849201',
-            author: const UserModel(id: 'EMP-052', name: 'Krit P.', role: 'Developer', email: 'krit@company.com', password: '', avatarUrl: 'KP'),
-            content: 'แก้ไขเรียบร้อยแล้ว กำลังทดสอบครับ',
-            dateText: '12 ต.ค. 2569 17:30',
-          ),
-        ],
-        activityLogs: [
-          const ActivityLogModel(
-            id: 'act-1',
-            caseId: '849201',
-            title: 'สร้างการ์ดออเดอร์',
-            authorName: 'Narin S.',
-            dateText: '12 ต.ค. 2569 14:32',
-            icon: Icons.add_circle,
-            iconColor: Colors.blue,
-            iconBgColor: Color(0xFFDBEAFE),
-          ),
-        ],
-      ),
-      OrderModel(
-        id: '392810',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.sameday,
-        priority: CasePriority.critical,
-        assignee: registeredUsers.last,
-        createBy: 'John',
-        dateText: '30 ต.ค. 2569',
-        attachments: const [
-          AttachmentModel(
-            id: 'att-2',
-            name: 'transfer_slip.png',
-            size: '1.1 MB',
-            dateText: '30 ต.ค. 2569',
-            fileType: 'png',
-          ),
-        ],
-        bankName: 'SCB',
-        paymentMethod: 'QR Code',
-        amount: 2500.0,
-        statusOrder: OrderStatus.waitingPayment, // M
-      ),
-      OrderModel(
-        id: '738201',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.nextday,
-        priority: CasePriority.medium,
-        assignee: null,
-        createBy: 'Mook',
-        dateText: '29 ต.ค. 2569',
-        attachments: const [
-          AttachmentModel(
-            id: 'att-3',
-            name: 'log_error.txt',
-            size: '45 KB',
-            dateText: '29 ต.ค. 2569',
-            fileType: 'txt',
-          ),
-        ],
-        errorDetails: 'ERR_WEIGHT_OVERFLOW - น้ำหนักเกินพิกัดขนส่ง',
-      ),
-      OrderModel(
-        id: '592810',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.normal,
-        priority: CasePriority.low,
-        assignee: registeredUsers[2],
-        createBy: 'Mook',
-        dateText: '28 ต.ค. 2569',
-        importFile: 'slip_kbank.pdf',
-        bankName: 'KBank',
-        paymentMethod: 'Mobile Banking',
-        amount: 1200.0,
-        statusOrder: OrderStatus.completed, // C
-      ),
-      OrderModel(
-        id: '619283',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.express,
-        priority: CasePriority.high,
-        assignee: registeredUsers.first,
-        createBy: 'John',
-        dateText: '27 ต.ค. 2569',
-        importFile: 'wreath_temple_slip.jpg',
-        bankName: 'BBL',
-        paymentMethod: 'Transfer',
-        amount: 4500.0,
-        statusOrder: OrderStatus.wreathTemple, // W
-      ),
-      // 5 New Order Diff Cards
-      OrderModel(
-        id: '6200078',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.express,
-        priority: CasePriority.high,
-        assignee: registeredUsers.first,
-        createBy: 'Patis',
-        dateText: '26 ต.ค. 2569',
-        errorDetails: 'ERR_SKU_NOT_FOUND - รหัสสินค้าไม่ตรงกับฐานข้อมูลสต็อก',
-        activityStatus: OrderActivityStatus.inProgress,
-      ),
-      OrderModel(
-        id: '6200079',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.sameday,
-        priority: CasePriority.medium,
-        assignee: null,
-        createBy: 'Mook',
-        dateText: '25 ต.ค. 2569',
-        errorDetails: 'ERR_STOCK_OUT - สินค้าในคลังหมดขณะทำการแพ็ค',
-        activityStatus: OrderActivityStatus.newOrder,
-      ),
-      OrderModel(
-        id: '6200080',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.nextday,
-        priority: CasePriority.low,
-        assignee: registeredUsers[1],
-        createBy: 'John',
-        dateText: '24 ต.ค. 2569',
-        errorDetails: 'ERR_PRICE_MISMATCH - ราคาสินค้าไม่ตรงกับโปรโมชั่น',
-        activityStatus: OrderActivityStatus.resolved,
-      ),
-      OrderModel(
-        id: '6200081',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.normal,
-        priority: CasePriority.critical,
-        assignee: registeredUsers[2],
-        createBy: 'Mook',
-        dateText: '23 ต.ค. 2569',
-        errorDetails: 'ERR_ADDRESS_INVALID - ที่อยู่จัดส่งไม่ครบถ้วน / ไม่มีรหัสไปรษณีย์',
-        activityStatus: OrderActivityStatus.investigating,
-      ),
-      OrderModel(
-        id: '6200082',
-        cardType: OrderCardType.orderDiff,
-        deliveryType: DeliveryType.express,
-        priority: CasePriority.medium,
-        assignee: registeredUsers.first,
-        createBy: 'Narin S.',
-        dateText: '22 ต.ค. 2569',
-        errorDetails: 'ERR_QUANTITY_LIMIT - จำนวนสั่งซื้อเกินโควต้าสูงสุดต่อคน',
-        activityStatus: OrderActivityStatus.closed,
-      ),
-      // 5 New Bank Issue Cards
-      OrderModel(
-        id: '7300011',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.sameday,
-        priority: CasePriority.critical,
-        assignee: registeredUsers[1],
-        createBy: 'John',
-        dateText: '26 ต.ค. 2569',
-        bankName: 'KBank',
-        paymentMethod: 'QR Code',
-        amount: 3400.0,
-        statusOrder: OrderStatus.waitingPayment, // M
-        activityStatus: OrderActivityStatus.inProgress,
-      ),
-      OrderModel(
-        id: '7300012',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.express,
-        priority: CasePriority.high,
-        assignee: registeredUsers.first,
-        createBy: 'Patis',
-        dateText: '25 ต.ค. 2569',
-        bankName: 'SCB',
-        paymentMethod: 'Mobile Banking',
-        amount: 1850.0,
-        statusOrder: OrderStatus.completed, // C
-        activityStatus: OrderActivityStatus.resolved,
-      ),
-      OrderModel(
-        id: '7300013',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.nextday,
-        priority: CasePriority.medium,
-        assignee: null,
-        createBy: 'Mook',
-        dateText: '24 ต.ค. 2569',
-        bankName: 'BBL',
-        paymentMethod: 'Transfer',
-        amount: 5200.0,
-        statusOrder: OrderStatus.pending, // P
-        activityStatus: OrderActivityStatus.newOrder,
-      ),
-      OrderModel(
-        id: '7300014',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.normal,
-        priority: CasePriority.low,
-        assignee: registeredUsers[2],
-        createBy: 'John',
-        dateText: '23 ต.ค. 2569',
-        bankName: 'KTB',
-        paymentMethod: 'QR Code',
-        amount: 990.0,
-        statusOrder: OrderStatus.expired, // E
-        activityStatus: OrderActivityStatus.closed,
-      ),
-      OrderModel(
-        id: '7300015',
-        cardType: OrderCardType.bankIssue,
-        deliveryType: DeliveryType.express,
-        priority: CasePriority.critical,
-        assignee: registeredUsers.first,
-        createBy: 'Mook',
-        dateText: '22 ต.ค. 2569',
-        bankName: 'Krungsri',
-        paymentMethod: 'Transfer',
-        amount: 3100.0,
-        statusOrder: OrderStatus.wreathTemple, // W
-        activityStatus: OrderActivityStatus.investigating,
-      ),
-    ];
-
-    notifications = [
-      AppNotificationModel(
-        id: 'notif-1',
-        title: 'มีคน Assign งานในเคส DEV-003',
-        subtitle: 'Mook มอบหมายให้คุณ',
-        timeAgo: '2 ชม. ที่ผ่านมา',
-        icon: Icons.person_add,
-        iconColor: const Color(0xFF2563EB),
-        iconBg: const Color(0xFFDBEAFE),
-        isRead: false,
-        module: NotificationModule.caseModule,
-        referenceId: 'DEV-003',
-        caseId: 'DEV-003',
-        targetUserId: 'EMP-001', // Patis
-        targetUserName: 'Patis',
-      ),
-      AppNotificationModel(
-        id: 'notif-2',
-        title: 'มี Comment ใหม่ในเคส DEV-002',
-        subtitle: 'John: ขอข้อมูลเพิ่มเติม',
-        timeAgo: '4 ชม. ที่ผ่านมา',
-        icon: Icons.chat_bubble_outline,
-        iconColor: const Color(0xFFDC2626),
-        iconBg: const Color(0xFFFEE2E2),
-        isRead: false,
-        module: NotificationModule.caseModule,
-        referenceId: 'DEV-002',
-        caseId: 'DEV-002',
-        targetUserId: 'EMP-003', // John
-        targetUserName: 'John',
-      ),
-      AppNotificationModel(
-        id: 'notif-3',
-        title: 'คุณถูก Mention ในเคส DEV-001',
-        subtitle: '@Patis ช่วยดูหน่อยครับ',
-        timeAgo: '5 ชม. ที่ผ่านมา',
-        icon: Icons.alternate_email,
-        iconColor: const Color(0xFFEA580C),
-        iconBg: const Color(0xFFFFEDD5),
-        isRead: false,
-        module: NotificationModule.caseModule,
-        referenceId: 'DEV-001',
-        caseId: 'DEV-001',
-        targetUserId: 'EMP-001', // Patis
-        targetUserName: 'Patis',
-      ),
-      AppNotificationModel(
-        id: 'notif-4',
-        title: 'เคส DEV-004 ถูกปิด',
-        subtitle: 'โดย Admin',
-        timeAgo: '1 วันที่ผ่านมา',
-        icon: Icons.check_circle_outline,
-        iconColor: const Color(0xFF16A34A),
-        iconBg: const Color(0xFFDCFCE7),
-        isRead: true,
-        module: NotificationModule.caseModule,
-        referenceId: 'DEV-004',
-        caseId: 'DEV-004',
-        targetUserId: 'EMP-004', // Admin
-        targetUserName: 'Admin',
-      ),
-      AppNotificationModel(
-        id: 'notif-5',
-        title: 'มี Comment ใหม่ในเคส DEV-005',
-        subtitle: 'Mook: แก้ไขแล้วครับ',
-        timeAgo: '2 วันที่ผ่านมา',
-        icon: Icons.chat_bubble_outline,
-        iconColor: const Color(0xFFDC2626),
-        iconBg: const Color(0xFFFEE2E2),
-        isRead: true,
-        module: NotificationModule.caseModule,
-        referenceId: 'DEV-005',
-        caseId: 'DEV-005',
-        targetUserId: 'EMP-002', // Mook
-        targetUserName: 'Mook',
-      ),
-      AppNotificationModel(
-        id: 'notif-6',
-        title: 'มีการเปลี่ยนแปลงสถานะในเคส DEV-003',
-        subtitle: 'Patis: In Progress → Testing',
-        timeAgo: '3 วันที่ผ่านมา',
-        icon: Icons.swap_horiz,
-        iconColor: const Color(0xFFD97706),
-        iconBg: const Color(0xFFFEF3C7),
-        isRead: true,
-        module: NotificationModule.caseModule,
-        referenceId: 'DEV-003',
-        caseId: 'DEV-003',
-        targetUserId: 'EMP-001', // Patis
-        targetUserName: 'Patis',
-      ),
-      AppNotificationModel(
-        id: 'notif-7',
-        title: 'สร้างการ์ดออเดอร์สำเร็จ (849201)',
-        subtitle: 'ประเภท: Order Card (Order Diff)',
-        timeAgo: '1 วันที่ผ่านมา',
-        icon: Icons.inventory_2_outlined,
-        iconColor: const Color(0xFF2563EB),
-        iconBg: const Color(0xFFDBEAFE),
-        isRead: false,
-        module: NotificationModule.orderDiff,
-        referenceId: '849201',
-        caseId: '849201',
-        targetUserId: 'EMP-001', // Patis
-        targetUserName: 'Patis',
-      ),
-      AppNotificationModel(
-        id: 'notif-8',
-        title: 'คุณได้รับมอบหมายออเดอร์ (392810)',
-        subtitle: 'Bank Issue Card โดย John',
-        timeAgo: '2 วันที่ผ่านมา',
-        icon: Icons.account_balance_outlined,
-        iconColor: const Color(0xFF9333EA),
-        iconBg: const Color(0xFFF3E8FF),
-        isRead: false,
-        module: NotificationModule.bankIssue,
-        referenceId: '392810',
-        caseId: '392810',
-        targetUserId: 'EMP-001', // Patis
-        targetUserName: 'Patis',
-      ),
-    ];
-  }
-
   // Set active tab index
   void setNavIndex(int index) {
     selectedNavIndex = index;
     notifyListeners();
+  }
+
+  bool _isWithinDateRange(String standardDateStr, DateTimeRange? range) {
+    if (range == null) return true;
+    final dt = DateTime.tryParse(standardDateStr);
+    if (dt == null) return true;
+    final dayOnly = DateTime(dt.year, dt.month, dt.day);
+    final startOnly = DateTime(range.start.year, range.start.month, range.start.day);
+    final endOnly = DateTime(range.end.year, range.end.month, range.end.day);
+    return !dayOnly.isBefore(startOnly) && !dayOnly.isAfter(endOnly);
   }
 
   // Filter getters with Case Access Control per Role
@@ -1353,6 +428,11 @@ class AppState extends ChangeNotifier {
       // Assignee filter
       if (filterAssignee != null && filterAssignee!.isNotEmpty && filterAssignee != 'ทั้งหมด') {
         if (c.assignee?.name != filterAssignee) return false;
+      }
+
+      // Date range filter
+      if (filterDateRange != null && !_isWithinDateRange(parseDateToStandard(c.dateText), filterDateRange)) {
+        return false;
       }
 
       return true;
@@ -1429,12 +509,14 @@ class AppState extends ChangeNotifier {
       // Search query
       if (orderSearchQuery.trim().isNotEmpty) {
         final q = orderSearchQuery.trim().toLowerCase();
-        final matchId = o.id.toLowerCase().contains(q);
+        final matchId = o.id.toLowerCase().contains(q) ||
+            o.allItems.any((item) => item.id.toLowerCase().contains(q));
         final matchCreateBy = o.createBy.toLowerCase().contains(q);
+        final matchAssignee = o.assignee?.name.toLowerCase().contains(q) ?? false;
         final matchError = o.errorDetails?.toLowerCase().contains(q) ?? false;
         final matchBank = o.bankName?.toLowerCase().contains(q) ?? false;
         final matchPayment = o.paymentMethod?.toLowerCase().contains(q) ?? false;
-        if (!matchId && !matchCreateBy && !matchError && !matchBank && !matchPayment) return false;
+        if (!matchId && !matchCreateBy && !matchAssignee && !matchError && !matchBank && !matchPayment) return false;
       }
 
       // Card Type filter
@@ -1457,12 +539,20 @@ class AppState extends ChangeNotifier {
         return false;
       }
 
+      // Date range filter
+      if (filterOrderDateRange != null && !_isWithinDateRange(o.effectiveStandardDate, filterOrderDateRange)) {
+        return false;
+      }
+
       return true;
     }).toList();
   }
 
   // User-specific notification getters
   List<AppNotificationModel> get currentUserNotifications {
+    if (dataMode == AppDataMode.real) {
+      return notifications;
+    }
     return notifications.where((n) {
       return n.targetUserId == currentUser.id;
     }).toList();
@@ -1574,7 +664,7 @@ class AppState extends ChangeNotifier {
 
   // User-Assigned Dashboard Order Getters
   List<OrderModel> get myOrders {
-    return orders.where((o) => o.assignee != null && o.assignee?.id == currentUser.id).toList();
+    return orders.where((o) => o.assignee != null && o.assignee == currentUser).toList();
   }
 
   int get myOrderTotalCount => myOrders.length;
@@ -1582,7 +672,104 @@ class AppState extends ChangeNotifier {
   int get myBankIssueCount => myOrders.where((o) => o.cardType == OrderCardType.bankIssue).length;
   int get myOrderClosedCount => myOrders.where((o) => o.activityStatus == OrderActivityStatus.closed).length;
 
-  void createOrderCard({
+  /// Groups orders into display cards by:
+  ///   (calendar day [effectiveStandardDate], cardType [orderDiff vs bankIssue], assignee [user or UNASSIGNED])
+  /// - Multiple orders on the same day for the same assignee & same cardType combine into 1 card.
+  /// - Different assignees on the same day get separate cards.
+  /// - Unassigned orders on the same day combine into 1 card per cardType (orderDiff / bankIssue).
+  /// - Individual OrderModel records remain intact so tapping any order chip opens its own OrderDetailScreen.
+  static List<OrderModel> groupOrdersIntoCards(List<OrderModel> sourceOrders) {
+    final Map<String, List<OrderModel>> buckets = {};
+
+    for (final order in sourceOrders) {
+      final dateKey = order.effectiveStandardDate;
+      final typeKey = order.cardType.name;
+      final assigneeKey = order.assignee == null
+          ? 'UNASSIGNED'
+          : (order.assignee!.authUserId ?? order.assignee!.id);
+      final groupKey = '$dateKey|$typeKey|$assigneeKey';
+      buckets.putIfAbsent(groupKey, () => []).add(order);
+    }
+
+    final List<OrderModel> cards = [];
+    for (final group in buckets.values) {
+      final primary = group.first;
+      final List<OrderItemModel> mergedItems = [];
+      final Set<String> seenItemIds = {};
+
+      for (final o in group) {
+        for (final item in o.allItems) {
+          final normId = item.id.trim().toLowerCase();
+          if (normId.isNotEmpty && seenItemIds.add(normId)) {
+            mergedItems.add(item);
+          }
+        }
+      }
+
+      cards.add(
+        primary.copyWith(
+          dateText: _formatGroupDayLabel(primary.effectiveStandardDate, primary.dateText),
+          standardDate: primary.effectiveStandardDate,
+          items: mergedItems,
+        ),
+      );
+    }
+
+    // Sort: newest day first -> assigned before unassigned -> orderDiff before bankIssue
+    cards.sort((a, b) {
+      final dateCmp = b.effectiveStandardDate.compareTo(a.effectiveStandardDate);
+      if (dateCmp != 0) return dateCmp;
+
+      final aUnassigned = a.assignee == null ? 1 : 0;
+      final bUnassigned = b.assignee == null ? 1 : 0;
+      if (aUnassigned != bUnassigned) return aUnassigned.compareTo(bUnassigned);
+
+      if (a.cardType != b.cardType) {
+        return a.cardType == OrderCardType.orderDiff ? -1 : 1;
+      }
+
+      final aName = a.assignee?.name.toLowerCase() ?? '';
+      final bName = b.assignee?.name.toLowerCase() ?? '';
+      return aName.compareTo(bName);
+    });
+
+    return cards;
+  }
+
+  static String _formatGroupDayLabel(String standardDate, String fallbackDateText) {
+    try {
+      final parts = standardDate.split('-');
+      if (parts.length == 3) {
+        final year = int.parse(parts[0]);
+        final month = int.parse(parts[1]);
+        final day = int.parse(parts[2]);
+        const thaiMonths = [
+          '', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+          'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+        ];
+        if (month >= 1 && month <= 12) {
+          return '$day ${thaiMonths[month]} ${year + 543}';
+        }
+      }
+    } catch (_) {}
+    return fallbackDateText;
+  }
+
+  List<OrderModel> get groupedOrders => groupOrdersIntoCards(
+        orders.where((o) => OrderRolePermissionHelper.canAccessOrder(currentUser, o)).toList(),
+      );
+
+  List<OrderModel> get groupedFilteredOrders => groupOrdersIntoCards(filteredOrders);
+
+  List<OrderModel> get groupedMyOrders => groupOrdersIntoCards(myOrders);
+
+  int get groupedOrderDiffCount =>
+      groupedOrders.where((o) => o.cardType == OrderCardType.orderDiff).length;
+
+  int get groupedBankIssueCount =>
+      groupedOrders.where((o) => o.cardType == OrderCardType.bankIssue).length;
+
+  Future<void> createOrderCard({
     required OrderCardType cardType,
     required String orderNo,
     required DeliveryType deliveryType,
@@ -1599,9 +786,55 @@ class AppState extends ChangeNotifier {
     String? paymentMethod,
     double? amount,
     OrderStatus? statusOrder,
-  }) {
+  }) async {
     final generated6Digit = (100000 + (DateTime.now().millisecondsSinceEpoch % 900000)).toString();
     final finalOrderNo = orderNo.trim().isNotEmpty ? orderNo.trim() : generated6Digit;
+
+    if (dataMode == AppDataMode.real) {
+      final created = await orderRepository.createOrder(
+        orderNumber: finalOrderNo,
+        cardType: cardType,
+        deliveryType: deliveryType,
+        priority: priority,
+        assigneeId: assignee?.authUserId,
+        errorDetails: errorDetails,
+        bankCode: bankCode,
+        bankName: bankName,
+        paymentMethodCode: paymentMethodCode,
+        paymentMethod: paymentMethod,
+        amount: amount,
+        statusOrder: statusOrder,
+      );
+
+      if (pendingFiles != null && pendingFiles.isNotEmpty && created.supabaseId != null) {
+        final List<String> uploadErrors = [];
+        for (final pf in pendingFiles) {
+          final bytes = await pf.getBytes();
+          if (bytes != null) {
+            try {
+              await orderRepository.uploadOrderAttachment(
+                supabaseOrderId: created.supabaseId!,
+                fileBytes: bytes,
+                fileName: pf.name,
+                fileType: pf.extension,
+                fileSizeBytes: pf.sizeBytes,
+                mimeType: pf.mimeType,
+              );
+            } catch (e) {
+              uploadErrors.add('${pf.name}: ${e.toString().replaceAll('Exception: ', '')}');
+            }
+          }
+        }
+        await loadOrdersFromSupabase();
+        if (uploadErrors.isNotEmpty) {
+          throw Exception('สร้างออเดอร์สำเร็จ แต่อัปโหลดไฟล์แนบไม่ผ่าน:\n${uploadErrors.join('\n')}');
+        }
+        return;
+      }
+
+      await loadOrdersFromSupabase();
+      return;
+    }
 
     final initialLogs = [
       ActivityLogModel(
@@ -1728,10 +961,41 @@ class AppState extends ChangeNotifier {
   }
 
   int _findOrderIndex(String orderId) {
-    return orders.indexWhere((o) => o.id == orderId || o.allItems.any((item) => item.id == orderId));
+    return orders.indexWhere(
+      (o) => o.supabaseId == orderId || o.id == orderId || o.allItems.any((item) => item.id == orderId),
+    );
   }
 
-  void updateOrderCard(OrderModel updatedOrder) {
+  Future<void> updateOrderCard(OrderModel updatedOrder) async {
+    if (dataMode == AppDataMode.real) {
+      final supabaseId = updatedOrder.supabaseId ?? _findSupabaseOrderId(updatedOrder.id);
+      if (supabaseId == null) {
+        throw Exception('ไม่พบรหัสอ้างอิงออเดอร์ในฐานข้อมูล Supabase');
+      }
+
+      final updates = <String, dynamic>{
+        'delivery_type': updatedOrder.deliveryType.name,
+        'priority': updatedOrder.priority.name,
+        'activity_status': updatedOrder.activityStatus.name,
+        'description': updatedOrder.errorDetails,
+        'assignee_id': updatedOrder.assignee?.authUserId,
+        'bank_code': updatedOrder.bankCode,
+        'bank_name': updatedOrder.bankName,
+        'payment_method_code': updatedOrder.paymentMethodCode,
+        'payment_method': updatedOrder.paymentMethod,
+        'amount': updatedOrder.amount ?? 0,
+        'status_order': updatedOrder.statusOrder?.code,
+      };
+
+      await orderRepository.updateOrder(
+        supabaseId,
+        updates,
+        items: updatedOrder.items.isNotEmpty ? updatedOrder.items : null,
+      );
+      await loadOrdersFromSupabase();
+      return;
+    }
+
     final index = _findOrderIndex(updatedOrder.id);
     if (index != -1) {
       final parentId = orders[index].id;
@@ -1740,45 +1004,74 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void addOrderToCard(String cardId, String orderNo, DeliveryType deliveryType) {
+  Future<void> addOrderToCard(String cardId, String orderNo, DeliveryType deliveryType) async {
+    final trimmedNo = orderNo.trim();
+    if (trimmedNo.isEmpty) return;
+
+    if (dataMode == AppDataMode.real) {
+      final supabaseId = _findSupabaseOrderId(cardId);
+      if (supabaseId != null) {
+        await orderRepository.addOrderItem(supabaseId, trimmedNo, deliveryType);
+        await loadOrdersFromSupabase();
+      }
+      return;
+    }
+
     final index = _findOrderIndex(cardId);
     if (index != -1) {
       final order = orders[index];
       final currentItems = List<OrderItemModel>.from(order.allItems);
-      final trimmedNo = orderNo.trim();
-      if (trimmedNo.isNotEmpty) {
-        if (!currentItems.any((item) => item.id.trim().toLowerCase() == trimmedNo.toLowerCase())) {
-          currentItems.add(OrderItemModel(id: trimmedNo, deliveryType: deliveryType));
-          orders[index] = order.copyWith(items: currentItems);
+      if (!currentItems.any((item) => item.id.trim().toLowerCase() == trimmedNo.toLowerCase())) {
+        currentItems.add(OrderItemModel(id: trimmedNo, deliveryType: deliveryType));
+        orders[index] = order.copyWith(items: currentItems);
 
-          final orderMod = order.cardType == OrderCardType.orderDiff ? NotificationModule.orderDiff : NotificationModule.bankIssue;
-          _sendNotification(
-            module: orderMod,
-            referenceId: cardId,
-            assignee: order.assignee,
-            title: 'เพิ่ม Order No. ในการ์ด $cardId',
-            subtitle: '${currentUser.name} เพิ่ม $trimmedNo (${deliveryType.label})',
-            icon: Icons.playlist_add,
-            iconColor: order.cardType == OrderCardType.orderDiff ? const Color(0xFF2563EB) : const Color(0xFF9333EA),
-            iconBg: order.cardType == OrderCardType.orderDiff ? const Color(0xFFDBEAFE) : const Color(0xFFF3E8FF),
-          );
+        final orderMod = order.cardType == OrderCardType.orderDiff ? NotificationModule.orderDiff : NotificationModule.bankIssue;
+        _sendNotification(
+          module: orderMod,
+          referenceId: cardId,
+          assignee: order.assignee,
+          title: 'เพิ่ม Order No. ในการ์ด $cardId',
+          subtitle: '${currentUser.name} เพิ่ม $trimmedNo (${deliveryType.label})',
+          icon: Icons.playlist_add,
+          iconColor: order.cardType == OrderCardType.orderDiff ? const Color(0xFF2563EB) : const Color(0xFF9333EA),
+          iconBg: order.cardType == OrderCardType.orderDiff ? const Color(0xFFDBEAFE) : const Color(0xFFF3E8FF),
+        );
 
-          notifyListeners();
-        }
+        notifyListeners();
       }
     }
   }
 
-  void deleteOrderCard(String orderId) {
+  Future<void> deleteOrderCard(String orderId) async {
+    if (dataMode == AppDataMode.real) {
+      final supabaseId = _findSupabaseOrderId(orderId);
+      if (supabaseId != null) {
+        await orderRepository.softDeleteOrder(supabaseId);
+        await loadOrdersFromSupabase();
+      }
+      return;
+    }
+
     orders.removeWhere((o) => o.id == orderId || o.allItems.any((item) => item.id == orderId));
     notifyListeners();
   }
 
-  void updateOrderActivityStatus(String orderId, OrderActivityStatus newStatus) {
+  Future<void> updateOrderActivityStatus(String orderId, OrderActivityStatus newStatus) async {
     final index = _findOrderIndex(orderId);
     if (index != -1) {
       final oldOrder = orders[index];
       if (!OrderRolePermissionHelper.canUpdateActivityStatus(currentUser, oldOrder)) {
+        return;
+      }
+
+      if (dataMode == AppDataMode.real) {
+        final supabaseId = oldOrder.supabaseId ?? _findSupabaseOrderId(orderId);
+        if (supabaseId != null) {
+          await orderRepository.updateOrder(supabaseId, {
+            'activity_status': newStatus.name,
+          });
+          await loadOrdersFromSupabase();
+        }
         return;
       }
       final timeStr = DateFormat('dd MMM yyyy HH:mm').format(DateTime.now());
@@ -1825,6 +1118,48 @@ class AppState extends ChangeNotifier {
     if (index == -1) return;
 
     final oldOrder = orders[index];
+
+    if (dataMode == AppDataMode.real) {
+      final supabaseId = oldOrder.supabaseId ?? _findSupabaseOrderId(orderId);
+      if (supabaseId == null) {
+        throw Exception('ไม่พบรหัสอ้างอิงออเดอร์ในฐานข้อมูล Supabase');
+      }
+
+      final List<String> uploadedPaths = [];
+      if (pendingFiles != null && pendingFiles.isNotEmpty) {
+        for (final pf in pendingFiles) {
+          final bytes = await pf.getBytes();
+          if (bytes != null) {
+            final att = await orderRepository.uploadOrderAttachment(
+              supabaseOrderId: supabaseId,
+              fileBytes: bytes,
+              fileName: pf.name,
+              fileType: pf.extension,
+              fileSizeBytes: pf.sizeBytes,
+              mimeType: pf.mimeType,
+            );
+            if (att.storagePath != null && att.storagePath!.isNotEmpty) {
+              uploadedPaths.add(att.storagePath!);
+            }
+          }
+        }
+      }
+
+      String finalContent = content.trim();
+      if (finalContent.isEmpty && uploadedPaths.isNotEmpty) {
+        finalContent = '[ไฟล์แนบ ${uploadedPaths.length} รายการ]';
+      }
+      if (uploadedPaths.isNotEmpty) {
+        final tags = uploadedPaths.map((p) => '[attachment:$p]').join('\n');
+        finalContent = '$finalContent\n$tags';
+      }
+      if (finalContent.trim().isEmpty) return;
+
+      await orderRepository.addComment(supabaseId, finalContent);
+      await loadOrdersFromSupabase();
+      return;
+    }
+
     final List<FileAttachmentModel> uploadedAttachments = [];
 
     if (pendingFiles != null && pendingFiles.isNotEmpty) {
@@ -1916,9 +1251,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void editOrderComment(String orderId, String commentId, String newContent) {
-    if (currentUser == null) return;
-    
+  Future<void> editOrderComment(String orderId, String commentId, String newContent) async {
+    if (dataMode == AppDataMode.real) {
+      await orderRepository.editComment(commentId, newContent.trim());
+      await loadOrdersFromSupabase();
+      return;
+    }
+
     final index = _findOrderIndex(orderId);
     if (index == -1) return;
     
@@ -1927,7 +1266,7 @@ class AppState extends ChangeNotifier {
     if (commentIndex == -1) return;
 
     final comment = oldOrder.comments[commentIndex];
-    if (!OrderRolePermissionHelper.canEditComment(currentUser!, comment)) return;
+    if (!OrderRolePermissionHelper.canEditComment(currentUser, comment)) return;
 
     final updatedComments = List<CommentModel>.from(oldOrder.comments);
     updatedComments[commentIndex] = comment.copyWith(content: newContent);
@@ -1936,9 +1275,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void deleteOrderComment(String orderId, String commentId) {
-    if (currentUser == null) return;
-    
+  Future<void> deleteOrderComment(String orderId, String commentId) async {
+    if (dataMode == AppDataMode.real) {
+      await orderRepository.deleteComment(commentId);
+      await loadOrdersFromSupabase();
+      return;
+    }
+
     final index = _findOrderIndex(orderId);
     if (index == -1) return;
     
@@ -1947,7 +1290,7 @@ class AppState extends ChangeNotifier {
     if (commentIndex == -1) return;
 
     final comment = oldOrder.comments[commentIndex];
-    if (!OrderRolePermissionHelper.canDeleteComment(currentUser!, comment)) return;
+    if (!OrderRolePermissionHelper.canDeleteComment(currentUser, comment)) return;
 
     final updatedComments = List<CommentModel>.from(oldOrder.comments)..removeAt(commentIndex);
 
@@ -2543,7 +1886,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void reassignOrderCard(String orderId, UserModel? newAssignee) {
+  Future<void> reassignOrderCard(String orderId, UserModel? newAssignee) async {
+    if (dataMode == AppDataMode.real) {
+      final supabaseId = _findSupabaseOrderId(orderId);
+      if (supabaseId != null) {
+        await orderRepository.updateOrder(supabaseId, {
+          'assignee_id': newAssignee?.authUserId,
+        });
+        await loadOrdersFromSupabase();
+      }
+      return;
+    }
+
     final index = _findOrderIndex(orderId);
     if (index != -1) {
       final oldOrder = orders[index];
@@ -2583,6 +1937,35 @@ class AppState extends ChangeNotifier {
 
       notifyListeners();
     }
+  }
+
+  Future<void> uploadOrderAttachment({
+    required String orderId,
+    required Uint8List fileBytes,
+    required String fileName,
+    required String fileSize,
+    required String fileType,
+    int? fileSizeBytes,
+    String? mimeType,
+  }) async {
+    if (dataMode == AppDataMode.real) {
+      final supabaseId = _findSupabaseOrderId(orderId);
+      if (supabaseId == null) {
+        throw Exception('ไม่พบรหัสอ้างอิงออเดอร์ในฐานข้อมูล Supabase');
+      }
+      await orderRepository.uploadOrderAttachment(
+        supabaseOrderId: supabaseId,
+        fileBytes: fileBytes,
+        fileName: fileName,
+        fileType: fileType,
+        fileSizeBytes: fileSizeBytes ?? fileBytes.length,
+        mimeType: mimeType,
+      );
+      await loadOrdersFromSupabase();
+      return;
+    }
+
+    addOrderAttachment(orderId, fileName, fileSize, fileType);
   }
 
   void addOrderAttachment(
@@ -2648,36 +2031,46 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void deleteOrderAttachment(String orderId, String attachmentId) {
+  Future<void> deleteOrderAttachment(String orderId, String attachmentId) async {
     final index = _findOrderIndex(orderId);
-    if (index != -1) {
-      final oldOrder = orders[index];
-      final timeStr = DateFormat('dd MMM yyyy HH:mm').format(DateTime.now());
-      final attToRemove = oldOrder.attachments.firstWhere(
-        (a) => a.id == attachmentId,
-        orElse: () => const AttachmentModel(id: '', name: 'ไฟล์', size: '', dateText: '', fileType: ''),
-      );
+    if (index == -1) return;
 
-      final newLog = ActivityLogModel(
-        id: 'ord-act-${DateTime.now().millisecondsSinceEpoch}',
-        caseId: orderId,
-        title: 'ลบไฟล์แนบ: ${attToRemove.name}',
-        authorName: currentUser.name,
-        dateText: timeStr,
-        icon: Icons.delete_outline,
-        iconColor: Colors.red,
-        iconBgColor: const Color(0xFFFEE2E2),
-      );
+    final oldOrder = orders[index];
+    final attToRemove = oldOrder.attachments.firstWhere(
+      (a) => a.id == attachmentId,
+      orElse: () => const AttachmentModel(id: '', name: 'ไฟล์', size: '', dateText: '', fileType: ''),
+    );
 
-      final updatedAttachments = oldOrder.attachments.where((a) => a.id != attachmentId).toList();
-      final updatedLogs = List<ActivityLogModel>.from(oldOrder.activityLogs)..add(newLog);
-
-      orders[index] = oldOrder.copyWith(
-        attachments: updatedAttachments,
-        activityLogs: updatedLogs,
+    if (dataMode == AppDataMode.real) {
+      await orderRepository.deleteOrderAttachment(
+        attachmentId,
+        storagePath: attToRemove.storagePath,
       );
-      notifyListeners();
+      await loadOrdersFromSupabase();
+      return;
     }
+
+    final timeStr = DateFormat('dd MMM yyyy HH:mm').format(DateTime.now());
+
+    final newLog = ActivityLogModel(
+      id: 'ord-act-${DateTime.now().millisecondsSinceEpoch}',
+      caseId: orderId,
+      title: 'ลบไฟล์แนบ: ${attToRemove.name}',
+      authorName: currentUser.name,
+      dateText: timeStr,
+      icon: Icons.delete_outline,
+      iconColor: Colors.red,
+      iconBgColor: const Color(0xFFFEE2E2),
+    );
+
+    final updatedAttachments = oldOrder.attachments.where((a) => a.id != attachmentId).toList();
+    final updatedLogs = List<ActivityLogModel>.from(oldOrder.activityLogs)..add(newLog);
+
+    orders[index] = oldOrder.copyWith(
+      attachments: updatedAttachments,
+      activityLogs: updatedLogs,
+    );
+    notifyListeners();
   }
 
   void reassignCase(String caseId, UserModel? newAssignee) async {
@@ -2807,15 +2200,18 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void markNotificationRead(String notifId) {
+  Future<void> markNotificationRead(String notifId) async {
     final index = notifications.indexWhere((n) => n.id == notifId);
-    if (index != -1) {
+    if (index != -1 && !notifications[index].isRead) {
       notifications[index] = notifications[index].copyWith(isRead: true);
       notifyListeners();
     }
+    if (dataMode == AppDataMode.real) {
+      await notificationRepository.markAsRead(notifId);
+    }
   }
 
-  void markAllNotificationsRead() {
+  Future<void> markAllNotificationsRead() async {
     final myNotifIds = currentUserNotifications.map((n) => n.id).toSet();
     notifications = notifications.map((n) {
       if (myNotifIds.contains(n.id)) {
@@ -2824,20 +2220,37 @@ class AppState extends ChangeNotifier {
       return n;
     }).toList();
     notifyListeners();
+    if (dataMode == AppDataMode.real) {
+      await notificationRepository.markAllAsRead();
+    }
   }
 
-  void updateUserProfile({
+  Future<void> updateUserProfile({
     required String name,
     required String phoneNumber,
-  }) {
-    final avatarLetter = name.trim().isNotEmpty ? name.trim().substring(0, 1).toUpperCase() : 'U';
+  }) async {
+    final trimmedName = name.trim();
+    final trimmedPhone = phoneNumber.trim();
+
+    if (dataMode == AppDataMode.real) {
+      final authUser = Supabase.instance.client.auth.currentUser;
+      if (authUser == null) {
+        throw Exception('ไม่พบ session ผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
+      }
+      await Supabase.instance.client.from('profiles').update({
+        'full_name': trimmedName,
+        'phone_number': trimmedPhone,
+      }).eq('id', authUser.id);
+    }
+
+    final avatarLetter = trimmedName.isNotEmpty ? trimmedName.substring(0, 1).toUpperCase() : 'U';
     currentUser = currentUser.copyWith(
-      name: name.trim(),
-      phoneNumber: phoneNumber.trim(),
+      name: trimmedName,
+      phoneNumber: trimmedPhone,
       avatarUrl: avatarLetter,
     );
 
-    final idx = registeredUsers.indexWhere((u) => u.id == currentUser.id);
+    final idx = registeredUsers.indexWhere((u) => u == currentUser);
     if (idx != -1) {
       registeredUsers[idx] = currentUser;
     }
@@ -2845,15 +2258,32 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void logout() {
+  Future<void> logout() async {
+    final token = NotificationService.cachedToken;
+    if (dataMode == AppDataMode.real && token != null && token.isNotEmpty) {
+      await notificationRepository.removeDeviceToken(token);
+    }
+    NotificationService.onTokenRefreshed = null;
+    await _stopNotificationsRealtime();
+    try {
+      await Supabase.instance.client.auth.signOut();
+    } catch (e) {
+      debugPrint('[AppState.logout] signOut warning: $e');
+    }
+    dataMode = AppDataMode.initializing;
     isLoggedIn = false;
     selectedNavIndex = 0; // Reset tab to Dashboard
-    notifyListeners();
-  }
-
-  void login() {
-    isLoggedIn = true;
-    selectedNavIndex = 0; // Reset tab to Dashboard
+    currentUser = const UserModel(
+      id: '',
+      name: '',
+      role: 'user',
+      email: '',
+      avatarUrl: 'U',
+    );
+    cases = [];
+    orders = [];
+    notifications = [];
+    registeredUsers = [];
     notifyListeners();
   }
 }

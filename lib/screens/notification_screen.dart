@@ -171,13 +171,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
                       ],
                     ),
                   )
-                : ListView.separated(
-                    itemCount: notifs.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.cardBorder),
-                    itemBuilder: (context, index) {
-                      final notif = notifs[index];
-                      return _buildNotificationTile(context, notif, appState);
-                    },
+                : RefreshIndicator(
+                    onRefresh: () => appState.loadNotificationsFromSupabase(),
+                    child: ListView.separated(
+                      itemCount: notifs.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1, color: AppColors.cardBorder),
+                      itemBuilder: (context, index) {
+                        final notif = notifs[index];
+                        return _buildNotificationTile(context, notif, appState);
+                      },
+                    ),
                   ),
           ),
         ],
@@ -242,7 +245,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
       onTap: () {
         appState.markNotificationRead(notif.id);
         final refId = notif.referenceId ?? notif.caseId;
-        if (refId != null) {
+        if (refId != null && refId.isNotEmpty) {
           if (notif.module == NotificationModule.caseModule) {
             Navigator.push(
               context,
@@ -250,7 +253,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 builder: (_) => CaseDetailScreen(caseId: refId),
               ),
             );
-          } else {
+          } else if (notif.module == NotificationModule.orderDiff ||
+              notif.module == NotificationModule.bankIssue) {
             Navigator.push(
               context,
               MaterialPageRoute(

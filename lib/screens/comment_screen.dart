@@ -9,6 +9,8 @@ import '../config/attachment_config.dart';
 import '../widgets/attachment_picker_widget.dart';
 import '../widgets/full_screen_image_viewer.dart';
 
+import '../models/role_permission.dart';
+
 class CommentScreen extends StatelessWidget {
   final String caseId;
 

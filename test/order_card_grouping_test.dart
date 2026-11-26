@@ -271,4 +271,91 @@ void main() {
       expect(appState.orders.first.priority, CasePriority.high);
     });
   });
+
+  group('AppState.groupOrdersIntoCards (Supabase multi-row grouping)', () {
+    const john = UserModel(
+      id: 'EMP-002',
+      authUserId: 'uid-john',
+      name: 'John',
+      role: 'developer',
+      email: 'john@company.com',
+      avatarUrl: 'J',
+    );
+    const patis = UserModel(
+      id: 'EMP-001',
+      authUserId: 'uid-patis',
+      name: 'Patis',
+      role: 'admin',
+      email: 'patis@company.com',
+      avatarUrl: 'P',
+    );
+
+    OrderModel makeOrder({
+      required String id,
+      required OrderCardType cardType,
+      required String standardDate,
+      UserModel? assignee,
+      DeliveryType deliveryType = DeliveryType.express,
+    }) {
+      return OrderModel(
+        id: id,
+        supabaseId: 'supa-$id',
+        cardType: cardType,
+        deliveryType: deliveryType,
+        priority: CasePriority.medium,
+        assignee: assignee,
+        createBy: 'Admin',
+        dateText: standardDate,
+        standardDate: standardDate,
+        items: [OrderItemModel(id: id, deliveryType: deliveryType)],
+      );
+    }
+
+    test('groups same-day orders by assignee and separates Order Diff vs Bank Issue (including Unassigned)', () {
+      final raw = [
+        // Day 2026-11-25 - John - Order Diff (2 orders -> 1 card)
+        makeOrder(id: '100001', cardType: OrderCardType.orderDiff, standardDate: '2026-11-25', assignee: john),
+        makeOrder(id: '100002', cardType: OrderCardType.orderDiff, standardDate: '2026-11-25', assignee: john),
+        // Day 2026-11-25 - John - Bank Issue (2 orders -> 1 separate card)
+        makeOrder(id: '200001', cardType: OrderCardType.bankIssue, standardDate: '2026-11-25', assignee: john),
+        makeOrder(id: '200002', cardType: OrderCardType.bankIssue, standardDate: '2026-11-25', assignee: john),
+        // Day 2026-11-25 - Patis - Order Diff (1 order -> separate card for Patis)
+        makeOrder(id: '100003', cardType: OrderCardType.orderDiff, standardDate: '2026-11-25', assignee: patis),
+        // Day 2026-11-25 - Unassigned - Order Diff (2 orders -> 1 unassigned Order Diff card)
+        makeOrder(id: '300001', cardType: OrderCardType.orderDiff, standardDate: '2026-11-25', assignee: null),
+        makeOrder(id: '300002', cardType: OrderCardType.orderDiff, standardDate: '2026-11-25', assignee: null),
+        // Day 2026-11-25 - Unassigned - Bank Issue (2 orders -> 1 separate unassigned Bank Issue card)
+        makeOrder(id: '400001', cardType: OrderCardType.bankIssue, standardDate: '2026-11-25', assignee: null),
+        makeOrder(id: '400002', cardType: OrderCardType.bankIssue, standardDate: '2026-11-25', assignee: null),
+        // Day 2026-11-24 - Unassigned - Order Diff (different day -> separate card)
+        makeOrder(id: '628096', cardType: OrderCardType.orderDiff, standardDate: '2026-11-24', assignee: null),
+        makeOrder(id: '651210', cardType: OrderCardType.orderDiff, standardDate: '2026-11-24', assignee: null),
+      ];
+
+      final cards = AppState.groupOrdersIntoCards(raw);
+
+      // Expected 6 cards total:
+      // 2026-11-25: John OrderDiff, Patis OrderDiff, John BankIssue, Unassigned OrderDiff, Unassigned BankIssue (5)
+      // 2026-11-24: Unassigned OrderDiff (1)
+      expect(cards.length, 6);
+
+      final johnDiff = cards.firstWhere((c) => c.effectiveStandardDate == '2026-11-25' && c.cardType == OrderCardType.orderDiff && c.assignee == john);
+      expect(johnDiff.allItems.map((i) => i.id), ['100001', '100002']);
+
+      final johnBank = cards.firstWhere((c) => c.effectiveStandardDate == '2026-11-25' && c.cardType == OrderCardType.bankIssue && c.assignee == john);
+      expect(johnBank.allItems.map((i) => i.id), ['200001', '200002']);
+
+      final patisDiff = cards.firstWhere((c) => c.effectiveStandardDate == '2026-11-25' && c.cardType == OrderCardType.orderDiff && c.assignee == patis);
+      expect(patisDiff.allItems.map((i) => i.id), ['100003']);
+
+      final unassignedDiffToday = cards.firstWhere((c) => c.effectiveStandardDate == '2026-11-25' && c.cardType == OrderCardType.orderDiff && c.assignee == null);
+      expect(unassignedDiffToday.allItems.map((i) => i.id), ['300001', '300002']);
+
+      final unassignedBankToday = cards.firstWhere((c) => c.effectiveStandardDate == '2026-11-25' && c.cardType == OrderCardType.bankIssue && c.assignee == null);
+      expect(unassignedBankToday.allItems.map((i) => i.id), ['400001', '400002']);
+
+      final unassignedDiffYesterday = cards.firstWhere((c) => c.effectiveStandardDate == '2026-11-24' && c.cardType == OrderCardType.orderDiff && c.assignee == null);
+      expect(unassignedDiffYesterday.allItems.map((i) => i.id), ['628096', '651210']);
+    });
+  });
 }

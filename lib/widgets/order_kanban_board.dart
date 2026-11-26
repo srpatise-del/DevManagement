@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/app_models.dart';
+import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import 'order_diff_card.dart';
 import 'bank_issue_card.dart';
@@ -15,9 +16,15 @@ class OrderKanbanBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final orderDiffs = orders.where((o) => o.cardType == OrderCardType.orderDiff).toList();
-    final bankPending = orders.where((o) => o.cardType == OrderCardType.bankIssue && o.statusOrder != OrderStatus.completed).toList();
-    final bankCompleted = orders.where((o) => o.cardType == OrderCardType.bankIssue && o.statusOrder == OrderStatus.completed).toList();
+    final orderDiffs = AppState.groupOrdersIntoCards(
+      orders.where((o) => o.cardType == OrderCardType.orderDiff).toList(),
+    );
+    final bankPending = AppState.groupOrdersIntoCards(
+      orders.where((o) => o.cardType == OrderCardType.bankIssue && o.statusOrder != OrderStatus.completed).toList(),
+    );
+    final bankCompleted = AppState.groupOrdersIntoCards(
+      orders.where((o) => o.cardType == OrderCardType.bankIssue && o.statusOrder == OrderStatus.completed).toList(),
+    );
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,

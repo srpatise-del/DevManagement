@@ -7,7 +7,6 @@ import '../theme/app_theme.dart';
 import '../models/app_models.dart';
 import '../models/file_attachment_model.dart';
 import '../config/attachment_config.dart';
-import '../services/storage_service.dart';
 import '../widgets/attachment_picker_widget.dart';
 import '../widgets/full_screen_image_viewer.dart';
 import 'edit_order_screen.dart';
@@ -465,40 +464,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                       final sizeStr = AttachmentConfig.formatFileSize(f.size);
 
                       if (f.bytes != null) {
-                        try {
-                          final fileModel = await StorageService.uploadFile(
-                            itemId: order.id,
-                            isCase: false,
-                            bytes: f.bytes!,
-                            fileName: f.name,
-                            sizeBytes: f.size,
-                          );
-                          appState.addOrderAttachment(
-                            order.id,
-                            fileModel.fileName,
-                            fileModel.fileSize,
-                            fileModel.fileType,
-                            storagePath: fileModel.storagePath,
-                            url: fileModel.url,
-                          );
-                        } catch (_) {
-                          appState.addOrderAttachment(order.id, f.name, sizeStr, ext);
-                        }
+                        await appState.uploadOrderAttachment(
+                          orderId: order.id,
+                          fileBytes: f.bytes!,
+                          fileName: f.name,
+                          fileSize: sizeStr,
+                          fileType: ext,
+                          fileSizeBytes: f.size,
+                        );
                       } else {
-                        appState.addOrderAttachment(order.id, f.name, sizeStr, ext);
+                        throw Exception('ไม่สามารถอ่านข้อมูลไฟล์จากอุปกรณ์ได้');
                       }
 
                       if (ctx.mounted) Navigator.pop(ctx);
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('แนบไฟล์ ${f.name} สำเร็จแล้ว')),
+                          SnackBar(content: Text('แนบไฟล์ ${f.name} สำเร็จแล้ว'), backgroundColor: Colors.green),
                         );
                       }
                     }
                   } catch (e) {
                     if (ctx.mounted) {
                       ScaffoldMessenger.of(ctx).showSnackBar(
-                        SnackBar(content: Text('เลือกไฟล์ไม่สำเร็จ: $e'), backgroundColor: Colors.red),
+                        SnackBar(
+                          content: Text('แนบไฟล์ไม่สำเร็จ: ${e.toString().replaceAll('Exception: ', '')}'),
+                          backgroundColor: Colors.red,
+                        ),
                       );
                     }
                   }
@@ -510,36 +501,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
-              const SizedBox(height: 16),
-              const Text('หรือเลือกไฟล์ตัวอย่าง:', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildSampleFileChip(appState, order, ctx, 'slip_payment_901.png', '1.2 MB', 'png'),
-                  _buildSampleFileChip(appState, order, ctx, 'order_report_q4.xlsx', '3.1 MB', 'xlsx'),
-                  _buildSampleFileChip(appState, order, ctx, 'error_stack_trace.txt', '120 KB', 'txt'),
-                  _buildSampleFileChip(appState, order, ctx, 'tax_invoice.pdf', '850 KB', 'pdf'),
-                ],
-              ),
+              const SizedBox(height: 8),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  Widget _buildSampleFileChip(AppState appState, OrderModel order, BuildContext ctx, String name, String size, String type) {
-    return ActionChip(
-      label: Text(name),
-      avatar: const Icon(Icons.attach_file, size: 14),
-      backgroundColor: const Color(0xFFF1F5F9),
-      onPressed: () {
-        appState.addOrderAttachment(order.id, name, size, type);
-        Navigator.pop(ctx);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('แนบไฟล์ $name สำเร็จแล้ว')),
         );
       },
     );
@@ -555,9 +519,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
         cardType: OrderCardType.orderDiff,
         deliveryType: DeliveryType.express,
         priority: CasePriority.medium,
-        createBy: 'Narin S.',
-        dateText: '12 Oct 2025 14:32',
-        errorDetails: 'Product not found\nไม่พบสินค้าตามรหัสที่ระบุ',
+        createBy: '-',
+        dateText: '',
+        errorDetails: null,
       ),
     );
 
@@ -1342,7 +1306,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                               _editOrderCommentController.text = comment.content;
                             });
                           } else if (value == 'delete') {
-                            _showDeleteOrderCommentDialog(context, appState, widget.orderObj.id, comment.id);
+                            _showDeleteOrderCommentDialog(context, appState, widget.orderId, comment.id);
                           }
                         },
                         itemBuilder: (context) => [
@@ -1399,7 +1363,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with SingleTicker
                           
                           setState(() { _isUpdatingOrderComment = true; });
                           try {
-                            appState.editOrderComment(widget.orderObj.id, comment.id, newText);
+                            appState.editOrderComment(widget.orderId, comment.id, newText);
                             if (mounted) {
                               setState(() {
                                 _editingOrderCommentId = null;

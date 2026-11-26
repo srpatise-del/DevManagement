@@ -119,7 +119,12 @@ class OrderDiffCard extends StatelessWidget {
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const CreateOrderCardScreen()),
+                              MaterialPageRoute(
+                                builder: (_) => CreateOrderCardScreen(
+                                  initialCardType: item.cardType,
+                                  initialAssignee: item.assignee,
+                                ),
+                              ),
                             );
                           },
                           icon: const Icon(Icons.add, size: 14, color: AppColors.primary),

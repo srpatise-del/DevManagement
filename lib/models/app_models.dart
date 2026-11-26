@@ -208,10 +208,12 @@ class UserModel {
       identical(this, other) ||
           other is UserModel &&
               runtimeType == other.runtimeType &&
-              id == other.id;
+              ((authUserId != null && other.authUserId != null)
+                  ? authUserId == other.authUserId
+                  : id == other.id);
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => (authUserId ?? id).hashCode;
 }
 
 
@@ -241,6 +243,7 @@ class CommentModel {
   });
 
   CommentModel copyWith({
+    String? content,
     int? likes,
     bool? isLiked,
     String? attachedImagePath,
@@ -253,7 +256,7 @@ class CommentModel {
       id: id,
       caseId: caseId,
       author: author,
-      content: content,
+      content: content ?? this.content,
       dateText: dateText,
       attachedImageUrl: clearAttachedImageUrl
           ? null
@@ -407,7 +410,8 @@ class CaseModel {
 enum NotificationModule {
   caseModule('Case Management'),
   orderDiff('Order Diff'),
-  bankIssue('Bank Issue');
+  bankIssue('Bank Issue'),
+  system('System');
 
   final String label;
   const NotificationModule(this.label);
@@ -645,6 +649,7 @@ const List<PaymentMethodInfo> kPaymentMethodList = [
 
 class OrderModel {
   final String id; // Card ID / Main Order No.
+  final String? supabaseId; // UUID from public.orders.id
   final OrderCardType cardType;
   final DeliveryType deliveryType; // Default delivery type for card
   final CasePriority priority;
@@ -673,6 +678,7 @@ class OrderModel {
 
   OrderModel({
     required this.id,
+    this.supabaseId,
     required this.cardType,
     required this.deliveryType,
     required this.priority,
@@ -751,6 +757,7 @@ class OrderModel {
 
   OrderModel copyWith({
     String? id,
+    String? supabaseId,
     OrderCardType? cardType,
     DeliveryType? deliveryType,
     CasePriority? priority,
@@ -781,6 +788,7 @@ class OrderModel {
   }) {
     return OrderModel(
       id: id ?? this.id,
+      supabaseId: supabaseId ?? this.supabaseId,
       cardType: cardType ?? this.cardType,
       deliveryType: deliveryType ?? this.deliveryType,
       priority: priority ?? this.priority,
@@ -833,7 +841,7 @@ class OrderRolePermissionHelper {
     if (role == UserRole.admin || role == UserRole.teamLead || role == UserRole.developer) {
       return true;
     }
-    return order.createBy.toLowerCase() == user.name.toLowerCase() || order.assignee?.id == user.id;
+    return order.createBy.toLowerCase() == user.name.toLowerCase() || order.assignee == user;
   }
 
   static bool canUpdateActivityStatus(UserModel user, OrderModel order) {
@@ -843,19 +851,19 @@ class OrderRolePermissionHelper {
     }
     if (role == UserRole.developer) {
       // Developer can only change activity status if assigned to them
-      return order.assignee?.id == user.id;
+      return order.assignee == user;
     }
     return false;
   }
 
   static bool canEditComment(UserModel user, CommentModel comment) {
     if (user.roleEnum == UserRole.admin) return true;
-    return user.id == comment.author.id;
+    return user == comment.author;
   }
 
   static bool canDeleteComment(UserModel user, CommentModel comment) {
     if (user.roleEnum == UserRole.admin) return true;
-    return user.id == comment.author.id;
+    return user == comment.author;
   }
 }
 

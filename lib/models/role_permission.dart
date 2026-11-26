@@ -103,18 +103,18 @@ class RolePermissionHelper {
       case UserRole.teamLead:
         // Team Lead sees all cases in their team or assigned to them/created by them
         if (user.team != null && caseObj.team == user.team) return true;
-        return caseObj.assignee?.id == user.id || caseObj.createdById == user.id;
+        return caseObj.assignee == user || caseObj.createdById == user.id;
 
       case UserRole.developer:
         // Developer sees cases assigned to them OR in their team
-        if (caseObj.assignee?.id == user.id) return true;
+        if (caseObj.assignee == user) return true;
         if (user.team != null && caseObj.team == user.team) return true;
         return caseObj.createdById == user.id;
 
       case UserRole.user:
         // User sees cases created by them or assigned to them or involved in
-        if (caseObj.createdById == user.id || caseObj.assignee?.id == user.id) return true;
-        final involvedInComments = caseObj.comments.any((c) => c.author.id == user.id);
+        if (caseObj.createdById == user.id || caseObj.assignee == user) return true;
+        final involvedInComments = caseObj.comments.any((c) => c.author == user);
         if (involvedInComments) return true;
         final involvedInLogs = caseObj.activityLogs.any((l) => l.authorName.toLowerCase() == user.name.toLowerCase());
         return involvedInLogs;
@@ -126,8 +126,8 @@ class RolePermissionHelper {
     // Admins can edit any comment
     if (user.roleEnum == UserRole.admin) return true;
     
-    // Otherwise, must be the owner (checked by user ID)
-    return user.id == comment.author.id;
+    // Otherwise, must be the owner (checked by authUserId/user ID)
+    return user == comment.author;
   }
 
   /// Determines if a [user] can delete a specific [comment].
@@ -135,8 +135,8 @@ class RolePermissionHelper {
     // Admins can delete any comment
     if (user.roleEnum == UserRole.admin) return true;
     
-    // Otherwise, must be the owner (checked by user ID)
-    return user.id == comment.author.id;
+    // Otherwise, must be the owner (checked by authUserId/user ID)
+    return user == comment.author;
   }
 
   /// Gets allowed status transitions for a [role] given the current [CaseStatus].

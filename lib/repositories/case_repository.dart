@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/attachment_config.dart';
 import '../models/app_models.dart';
 
 class CaseRepository {
@@ -314,6 +315,7 @@ class CaseRepository {
     required String fileName,
     required String fileSize,
     required String fileType,
+    int? fileSizeBytes,
   }) async {
     try {
       final user = _client.auth.currentUser;
@@ -321,7 +323,9 @@ class CaseRepository {
         throw Exception('User not authenticated.');
       }
 
-      final storagePath = 'cases/$supabaseCaseId/$fileName';
+      final cleanFileName = fileName.replaceAll(RegExp(r'[^\w\.\-]'), '_');
+      final storagePath = 'cases/$supabaseCaseId/$cleanFileName';
+      final sizeBytes = fileSizeBytes ?? fileBytes.length;
 
       await _client.storage.from('case-attachments').uploadBinary(
             storagePath,
@@ -332,7 +336,7 @@ class CaseRepository {
       final insertData = {
         'case_id': supabaseCaseId,
         'file_name': fileName,
-        'file_size': fileSize,
+        'file_size': sizeBytes,
         'file_type': fileType,
         'storage_path': storagePath,
         'uploaded_by': user.id,
@@ -349,7 +353,7 @@ class CaseRepository {
 
       return CaseFileAttachment(
         fileName: fileName,
-        fileSize: fileSize,
+        fileSize: fileSize.isNotEmpty ? fileSize : AttachmentConfig.formatFileSize(sizeBytes),
         fileType: fileType,
         storagePath: storagePath,
       );
@@ -363,13 +367,19 @@ class CaseRepository {
   }
 
   Future<String?> getSignedUrl(String storagePath) async {
+    if (storagePath.isEmpty) return null;
     try {
-      if (storagePath.isEmpty) return null;
       return await _client.storage
           .from('case-attachments')
           .createSignedUrl(storagePath, 60 * 60 * 24);
     } catch (_) {
-      return null;
+      try {
+        return await _client.storage
+            .from('attachments')
+            .createSignedUrl(storagePath, 60 * 60 * 24);
+      } catch (_) {
+        return null;
+      }
     }
   }
 
@@ -391,9 +401,14 @@ class CaseRepository {
     }
 
     final creatorJson = json['creator'];
-    String createdById = 'EMP-001';
+    String createdById;
     if (creatorJson != null && creatorJson is Map<String, dynamic>) {
-      createdById = creatorJson['employee_code'] as String? ?? 'EMP-001';
+      createdById = _mapJsonToUserModel(creatorJson).id;
+    } else {
+      final rawCreatorAuthId = json['created_by']?.toString();
+      createdById = (rawCreatorAuthId != null && rawCreatorAuthId.length >= 6)
+          ? 'EMP-${rawCreatorAuthId.substring(0, 6).toUpperCase()}'
+          : 'EMP-000';
     }
 
     final createdAtStr = json['created_at'];
@@ -428,7 +443,10 @@ class CaseRepository {
     for (var att in attachmentsList) {
       if (att is Map<String, dynamic>) {
         final fileName = att['file_name'] as String? ?? '';
-        final fileSize = att['file_size'] as String? ?? '0 KB';
+        final rawFileSize = att['file_size'];
+        final fileSize = rawFileSize is num
+            ? AttachmentConfig.formatFileSize(rawFileSize.toInt())
+            : (rawFileSize?.toString() ?? '0 KB');
         final fileType = att['file_type'] as String?;
         final storagePath = att['storage_path'] as String?;
 
@@ -544,7 +562,13 @@ class CaseRepository {
         avatarUrl: 'U',
       );
     }
-    final employeeCode = json['employee_code'] as String? ?? 'EMP-001';
+    final authId = json['id']?.toString();
+    final rawEmpCode = (json['employee_code'] as String?)?.trim();
+    final employeeCode = (rawEmpCode != null && rawEmpCode.isNotEmpty)
+        ? rawEmpCode
+        : (authId != null && authId.length >= 6
+            ? 'EMP-${authId.substring(0, 6).toUpperCase()}'
+            : 'EMP-000');
     final fullName = json['full_name'] as String? ?? 'User';
     final email = json['email'] as String? ?? '';
     final role = json['role'] as String? ?? 'user';
@@ -552,7 +576,7 @@ class CaseRepository {
 
     return UserModel(
       id: employeeCode,
-      authUserId: json['id']?.toString(),
+      authUserId: authId,
       name: fullName,
       role: role,
       email: email,

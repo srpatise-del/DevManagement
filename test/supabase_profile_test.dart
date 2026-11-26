@@ -46,16 +46,15 @@ void main() {
       expect(appState.orders, isEmpty);
     });
 
-    test('Phase 1: Demo Mode sets demo mode and populates mock data', () {
+    test('AppState starts clean without mock data before login', () {
       final appState = AppState();
-      final demoUser = appState.registeredUsers.first;
 
-      appState.quickDemoLogin(demoUser);
-
-      expect(appState.dataMode, AppDataMode.demo);
-      expect(appState.isLoggedIn, true);
-      expect(appState.cases, isNotEmpty);
-      expect(appState.orders, isNotEmpty);
+      expect(appState.dataMode, AppDataMode.initializing);
+      expect(appState.isLoggedIn, false);
+      expect(appState.cases, isEmpty);
+      expect(appState.orders, isEmpty);
+      expect(appState.notifications, isEmpty);
+      expect(appState.registeredUsers, isEmpty);
     });
   });
 }

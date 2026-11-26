@@ -6,7 +6,14 @@ import '../models/app_models.dart';
 import '../widgets/attachment_picker_widget.dart';
 
 class CreateOrderCardScreen extends StatefulWidget {
-  const CreateOrderCardScreen({super.key});
+  final OrderCardType? initialCardType;
+  final UserModel? initialAssignee;
+
+  const CreateOrderCardScreen({
+    super.key,
+    this.initialCardType,
+    this.initialAssignee,
+  });
 
   @override
   State<CreateOrderCardScreen> createState() => _CreateOrderCardScreenState();
@@ -30,6 +37,15 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
   CasePriority _priority = CasePriority.medium;
   OrderStatus _statusOrder = OrderStatus.pending;
   UserModel? _assignee;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialCardType != null) {
+      _cardType = widget.initialCardType!;
+    }
+    _assignee = widget.initialAssignee;
+  }
 
   @override
   void dispose() {
@@ -127,30 +143,7 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
 
 
 
-  Widget _buildPresetChip(String name, String size, String type, BuildContext ctx) {
-    return ActionChip(
-      label: Text(name),
-      avatar: const Icon(Icons.attach_file, size: 14),
-      backgroundColor: const Color(0xFFF1F5F9),
-      onPressed: () {
-        setState(() {
-          _attachedFiles.add(AttachmentModel(
-            id: 'att-${DateTime.now().millisecondsSinceEpoch}',
-            name: name,
-            size: size,
-            dateText: 'วันนี้',
-            fileType: type,
-          ));
-        });
-        Navigator.pop(ctx);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('แนบไฟล์ $name แล้ว')),
-        );
-      },
-    );
-  }
-
-  void _submit() {
+  Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
       final appState = Provider.of<AppState>(context, listen: false);
       final selectedBank = kBankList.firstWhere((b) => b.code == _selectedBankCode, orElse: () => kBankList.first);
@@ -159,32 +152,43 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
       final selectedPM = kPaymentMethodList.firstWhere((p) => p.code == _selectedPaymentMethodCode, orElse: () => kPaymentMethodList.first);
       final finalPaymentMethod = _selectedPaymentMethodCode == 'OTHER' ? _customPaymentMethodController.text.trim() : selectedPM.name;
 
-      appState.createOrderCard(
-        cardType: _cardType,
-        orderNo: _orderNoController.text.trim(),
-        deliveryType: _deliveryType,
-        priority: _priority,
-        assignee: _assignee,
-        createBy: appState.currentUser.name,
-        attachments: _attachedFiles,
-        pendingFiles: _pendingFiles,
-        errorDetails: _cardType == OrderCardType.orderDiff ? _errorDetailsController.text.trim() : null,
-        bankCode: _cardType == OrderCardType.bankIssue ? _selectedBankCode : null,
-        bankName: _cardType == OrderCardType.bankIssue ? finalBankName : null,
-        paymentMethodCode: _cardType == OrderCardType.bankIssue ? _selectedPaymentMethodCode : null,
-        paymentMethod: _cardType == OrderCardType.bankIssue ? finalPaymentMethod : null,
-        amount: _cardType == OrderCardType.bankIssue ? double.tryParse(_amountController.text.trim()) ?? 0.0 : null,
-        statusOrder: _cardType == OrderCardType.bankIssue ? _statusOrder : null,
-      );
+      try {
+        await appState.createOrderCard(
+          cardType: _cardType,
+          orderNo: _orderNoController.text.trim(),
+          deliveryType: _deliveryType,
+          priority: _priority,
+          assignee: _assignee,
+          createBy: appState.currentUser.name,
+          attachments: _attachedFiles,
+          pendingFiles: _pendingFiles,
+          errorDetails: _cardType == OrderCardType.orderDiff ? _errorDetailsController.text.trim() : null,
+          bankCode: _cardType == OrderCardType.bankIssue ? _selectedBankCode : null,
+          bankName: _cardType == OrderCardType.bankIssue ? finalBankName : null,
+          paymentMethodCode: _cardType == OrderCardType.bankIssue ? _selectedPaymentMethodCode : null,
+          paymentMethod: _cardType == OrderCardType.bankIssue ? finalPaymentMethod : null,
+          amount: _cardType == OrderCardType.bankIssue ? double.tryParse(_amountController.text.trim()) ?? 0.0 : null,
+          statusOrder: _cardType == OrderCardType.bankIssue ? _statusOrder : null,
+        );
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('สร้างการ์ดออเดอร์เรียบร้อยแล้ว'),
-          backgroundColor: Colors.green,
-        ),
-      );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('สร้างการ์ดออเดอร์เรียบร้อยแล้ว'),
+            backgroundColor: Colors.green,
+          ),
+        );
 
-      Navigator.pop(context);
+        Navigator.pop(context);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('สร้างการ์ดออเดอร์ไม่สำเร็จ: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -416,7 +420,7 @@ class _CreateOrderCardScreenState extends State<CreateOrderCardScreen> {
               const Text('ผู้รับผิดชอบงาน (Assign)', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
               DropdownButtonFormField<UserModel?>(
-                value: _assignee,
+                value: appState.registeredUsers.contains(_assignee) ? _assignee : null,
                 items: [
                   const DropdownMenuItem(value: null, child: Text('ยังไม่ระบุผู้รับผิดชอบ')),
                   ...appState.registeredUsers.map((u) => DropdownMenuItem(value: u, child: Text('${u.name} (${u.role})'))),
